@@ -1,0 +1,24 @@
+{
+  "apps": [
+    {
+      "name": "api",
+      "command": "TESTAPP_BIN",
+      "args": ["--run-forever", "--stdout-every", "500ms"],
+      "autorestart": "always"
+    },
+    {
+      "name": "flaky-worker",
+      "command": "TESTAPP_BIN",
+      "args": ["--crash-random", "5s", "--exit-code", "1"],
+      "autorestart": "on-failure",
+      "max_restarts": 3,
+      "restart_delay": "1s"
+    },
+    {
+      "name": "one-shot",
+      "command": "TESTAPP_BIN",
+      "args": ["--exit-after", "2s"],
+      "autorestart": "never"
+    }
+  ]
+}

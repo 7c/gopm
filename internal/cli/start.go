@@ -1,0 +1,183 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/config"
+	"github.com/7c/gopm/internal/protocol"
+	"github.com/spf13/cobra"
+)
+
+var startCmd = &cobra.Command{
+	Use:   "start <script|binary|config.json> [flags] [-- args...]",
+	Short: "Start a process or load an ecosystem config",
+	Args:  cobra.MinimumNArgs(1),
+	// TraverseChildren allows flags after positional args and before "--".
+	TraverseChildren: true,
+	Run:              runStart,
+}
+
+// start-specific flags
+var (
+	startName        string
+	startCwd         string
+	startInterpreter string
+	startEnv         []string
+	startAutoRestart string
+	startMaxRestarts int
+	startMinUptime   string
+	startRestartDelay string
+	startExpBackoff  bool
+	startMaxDelay    string
+	startKillTimeout string
+	startLogOut      string
+	startLogErr      string
+	startMaxLogSize  string
+)
+
+func init() {
+	f := startCmd.Flags()
+	f.StringVar(&startName, "name", "", "process name")
+	f.StringVar(&startCwd, "cwd", "", "working directory")
+	f.StringVar(&startInterpreter, "interpreter", "", "interpreter (e.g. node, python3)")
+	f.StringArrayVar(&startEnv, "env", nil, "environment variable KEY=VAL (repeatable)")
+	f.StringVar(&startAutoRestart, "autorestart", "", "restart policy: always|on-failure|never")
+	f.IntVar(&startMaxRestarts, "max-restarts", -1, "max restart attempts (-1 = use default)")
+	f.StringVar(&startMinUptime, "min-uptime", "", "minimum uptime before considered stable (e.g. 5s)")
+	f.StringVar(&startRestartDelay, "restart-delay", "", "delay between restarts (e.g. 1s)")
+	f.BoolVar(&startExpBackoff, "exp-backoff", false, "enable exponential backoff on restarts")
+	f.StringVar(&startMaxDelay, "max-delay", "", "max delay for exponential backoff (e.g. 30s)")
+	f.StringVar(&startKillTimeout, "kill-timeout", "", "time to wait for graceful stop (e.g. 5s)")
+	f.StringVar(&startLogOut, "log-out", "", "stdout log file path")
+	f.StringVar(&startLogErr, "log-err", "", "stderr log file path")
+	f.StringVar(&startMaxLogSize, "max-log-size", "", "max log file size before rotation (e.g. 10M)")
+}
+
+func runStart(cmd *cobra.Command, args []string) {
+	target := args[0]
+
+	// Collect everything after "--" as child process arguments.
+	childArgs := args[1:]
+
+	// If the target is a .json file, treat it as an ecosystem config.
+	if strings.HasSuffix(target, ".json") {
+		startEcosystem(target)
+		return
+	}
+
+	startSingle(target, childArgs)
+}
+
+// startEcosystem loads an ecosystem JSON file and starts each app.
+func startEcosystem(path string) {
+	eco, err := config.LoadEcosystem(path)
+	if err != nil {
+		exitError(fmt.Sprintf("failed to load ecosystem config: %v", err))
+	}
+
+	c, err := client.New()
+	if err != nil {
+		exitError(fmt.Sprintf("cannot connect to daemon: %v", err))
+	}
+	defer c.Close()
+
+	for _, app := range eco.Apps {
+		params := app.ToStartParams()
+		resp, err := c.Send(protocol.MethodStart, params)
+		if err != nil {
+			exitError(fmt.Sprintf("failed to start %q: %v", app.Name, err))
+		}
+		if !resp.Success {
+			exitError(fmt.Sprintf("failed to start %q: %s", app.Name, resp.Error))
+		}
+
+		if jsonOutput {
+			fmt.Println(string(resp.Data))
+		} else {
+			var info protocol.ProcessInfo
+			if err := json.Unmarshal(resp.Data, &info); err == nil {
+				fmt.Printf("Process %s started (PID: %d)\n", info.Name, info.PID)
+			}
+		}
+	}
+}
+
+// startSingle starts a single process from CLI flags.
+func startSingle(command string, childArgs []string) {
+	// Resolve command to absolute path.
+	if !filepath.IsAbs(command) {
+		if strings.Contains(command, "/") {
+			// Relative path with directory component - resolve from CWD.
+			if abs, err := filepath.Abs(command); err == nil {
+				command = abs
+			}
+		} else {
+			// Bare command name - look up in PATH.
+			if abs, err := exec.LookPath(command); err == nil {
+				command = abs
+			}
+		}
+	}
+
+	params := protocol.StartParams{
+		Command:      command,
+		Name:         startName,
+		Args:         childArgs,
+		Cwd:          startCwd,
+		Interpreter:  startInterpreter,
+		AutoRestart:  startAutoRestart,
+		ExpBackoff:   startExpBackoff,
+		MinUptime:    startMinUptime,
+		RestartDelay: startRestartDelay,
+		MaxDelay:     startMaxDelay,
+		KillTimeout:  startKillTimeout,
+		LogOut:       startLogOut,
+		LogErr:       startLogErr,
+		MaxLogSize:   startMaxLogSize,
+	}
+
+	if startMaxRestarts >= 0 {
+		params.MaxRestarts = &startMaxRestarts
+	}
+
+	// Parse --env KEY=VAL entries into a map.
+	if len(startEnv) > 0 {
+		envMap := make(map[string]string, len(startEnv))
+		for _, entry := range startEnv {
+			k, v, ok := strings.Cut(entry, "=")
+			if !ok {
+				exitError(fmt.Sprintf("invalid --env value %q: expected KEY=VAL", entry))
+			}
+			envMap[k] = v
+		}
+		params.Env = envMap
+	}
+
+	c, err := client.New()
+	if err != nil {
+		exitError(fmt.Sprintf("cannot connect to daemon: %v", err))
+	}
+	defer c.Close()
+
+	resp, err := c.Send(protocol.MethodStart, params)
+	if err != nil {
+		exitError(fmt.Sprintf("failed to start process: %v", err))
+	}
+	if !resp.Success {
+		exitError(resp.Error)
+	}
+
+	if jsonOutput {
+		fmt.Println(string(resp.Data))
+	} else {
+		var info protocol.ProcessInfo
+		if err := json.Unmarshal(resp.Data, &info); err == nil {
+			fmt.Printf("Process %s started (PID: %d)\n", info.Name, info.PID)
+		}
+	}
+}

@@ -1,0 +1,24 @@
+{
+  "apps": [
+    { "name": "proc-01", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-02", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-03", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-04", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-05", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-06", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-07", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-08", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-09", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-10", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-11", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-12", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-13", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-14", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-15", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-16", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-17", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-18", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-19", "command": "TESTAPP_BIN", "args": ["--run-forever"] },
+    { "name": "proc-20", "command": "TESTAPP_BIN", "args": ["--run-forever"] }
+  ]
+}

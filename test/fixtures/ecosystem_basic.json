@@ -1,0 +1,19 @@
+{
+  "apps": [
+    {
+      "name": "stable-1",
+      "command": "TESTAPP_BIN",
+      "args": ["--run-forever", "--stdout-every", "1s"]
+    },
+    {
+      "name": "stable-2",
+      "command": "TESTAPP_BIN",
+      "args": ["--run-forever", "--alloc-mb", "10"]
+    },
+    {
+      "name": "stable-3",
+      "command": "TESTAPP_BIN",
+      "args": ["--run-forever", "--cpu-burn", "1"]
+    }
+  ]
+}

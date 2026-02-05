@@ -1,0 +1,26 @@
+# Binary
+gopm
+*.exe
+
+# Test binaries
+test/bin/
+
+# GoLand / IDE
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# GoPM runtime state (never commit)
+*.sock
+daemon.pid
+daemon.log
+dump.json
+
+# Log files
+*.log
+*.log.*
