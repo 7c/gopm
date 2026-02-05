@@ -395,3 +395,55 @@ func TestExternalKillTriggersRestart(t *testing.T) {
 		t.Error("restarts should be > 0 after external kill")
 	}
 }
+
+func TestReboot(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Start two processes
+	env.MustGopm("start", env.TestappBin, "--name", "rb1", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "rb2", "--", "--run-forever")
+	env.WaitForStatus("rb1", "online", 5*time.Second)
+	env.WaitForStatus("rb2", "online", 5*time.Second)
+
+	// Get old daemon PID
+	oldPID := env.GetProcessField("rb1", "pid")
+
+	// Get daemon PID from ping
+	out := env.MustGopm("ping", "--json")
+	var pingBefore map[string]interface{}
+	json.Unmarshal([]byte(out), &pingBefore)
+	daemonPIDBefore := pingBefore["pid"]
+
+	// Reboot
+	out = env.MustGopm("reboot")
+	if !strings.Contains(out, "rebooted") {
+		t.Errorf("reboot output unexpected: %q", out)
+	}
+	if strings.Contains(out, "PID: 0") {
+		t.Errorf("reboot should show actual PID, got: %q", out)
+	}
+
+	// Wait for processes to come back online
+	env.WaitForStatus("rb1", "online", 15*time.Second)
+	env.WaitForStatus("rb2", "online", 15*time.Second)
+
+	// Daemon PID should have changed
+	out = env.MustGopm("ping", "--json")
+	var pingAfter map[string]interface{}
+	json.Unmarshal([]byte(out), &pingAfter)
+	if pingAfter["pid"] == daemonPIDBefore {
+		t.Errorf("daemon PID should change after reboot, still %v", daemonPIDBefore)
+	}
+
+	// Process PIDs should have changed (new processes)
+	newPID := env.GetProcessField("rb1", "pid")
+	if newPID == oldPID {
+		t.Errorf("process PID should change after reboot, still %s", oldPID)
+	}
+
+	// Both processes should be present
+	count := env.ProcessCount()
+	if count != 2 {
+		t.Errorf("expected 2 processes after reboot, got %d", count)
+	}
+}

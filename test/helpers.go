@@ -114,11 +114,18 @@ func (e *TestEnv) WaitForRestartCount(name string, minRestarts int, timeout time
 	e.T.Fatalf("timeout: %s did not reach %d restarts within %s", name, minRestarts, timeout)
 }
 
-// Cleanup kills the daemon and removes temp files.
+// Cleanup kills the daemon and waits for it to fully stop.
 func (e *TestEnv) Cleanup() {
 	e.Gopm("kill")
-	// Give daemon time to clean up
-	time.Sleep(200 * time.Millisecond)
+	// Wait for socket to disappear (daemon fully stopped)
+	sockPath := filepath.Join(e.Home, "gopm.sock")
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(sockPath); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // WriteEcosystem writes a JSON config file and returns its path.

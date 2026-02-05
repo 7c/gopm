@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"os"
 	"time"
 
 	"github.com/7c/gopm/internal/client"
@@ -37,41 +39,61 @@ func runReboot(cmd *cobra.Command, args []string) {
 	if !resp.Success {
 		outputError(resp.Error)
 	}
+	c.Close()
+
+	// Read dump.json into memory BEFORE killing.
+	// The daemon's shutdown() will overwrite it with stopped-status processes.
+	dumpPath := protocol.DumpFilePath()
+	savedDump, err := os.ReadFile(dumpPath)
+	if err != nil {
+		outputError(fmt.Sprintf("failed to read dump file: %v", err))
+	}
 
 	// Step 2: Kill daemon
 	fmt.Printf("[2/3] %s daemon...\n", display.Dim("Stopping"))
-	c.Send(protocol.MethodKill, nil)
-	c.Close()
-
-	// Wait for daemon to fully stop
-	time.Sleep(500 * time.Millisecond)
-
-	// Step 3: Start fresh daemon and resurrect
-	fmt.Printf("[3/3] %s daemon and restoring processes...\n", display.Dim("Starting"))
 	c2, err := client.New()
+	if err != nil {
+		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
+	}
+	c2.Send(protocol.MethodKill, nil)
+	c2.Close()
+
+	// Wait for daemon to actually die (poll socket)
+	sockPath := protocol.SocketPath()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
+		if err != nil {
+			break // daemon is gone
+		}
+		conn.Close()
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// Restore the good dump.json (with online statuses)
+	os.WriteFile(dumpPath, savedDump, 0644)
+
+	// Step 3: Start fresh daemon (auto-loads dump.json)
+	fmt.Printf("[3/3] %s daemon and restoring processes...\n", display.Dim("Starting"))
+	c3, err := client.New()
 	if err != nil {
 		outputError(fmt.Sprintf("failed to start new daemon: %v", err))
 	}
-	defer c2.Close()
-
-	resp, err = c2.Send(protocol.MethodResurrect, nil)
-	if err != nil {
-		outputError(fmt.Sprintf("failed to resurrect: %v", err))
-	}
-	if !resp.Success {
-		outputError(resp.Error)
-	}
+	defer c3.Close()
 
 	if jsonOutput {
+		resp, err := c3.Send(protocol.MethodPing, nil)
+		if err != nil {
+			outputError(fmt.Sprintf("failed to ping new daemon: %v", err))
+		}
 		outputJSON(resp.Data)
 		return
 	}
 
-	// Get new daemon info
-	time.Sleep(200 * time.Millisecond)
-	pingResp, _ := c2.Send(protocol.MethodPing, nil)
+	// Ping new daemon for info
+	pingResp, err := c3.Send(protocol.MethodPing, nil)
 	var ping protocol.PingResult
-	if pingResp != nil && pingResp.Success {
+	if err == nil && pingResp != nil && pingResp.Success {
 		json.Unmarshal(pingResp.Data, &ping)
 	}
 
