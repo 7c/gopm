@@ -87,20 +87,28 @@ func runInstall(cmd *cobra.Command, args []string) {
 		Home: u.HomeDir,
 	}
 
-	// [1/5] Copy binary to /usr/local/bin/gopm.
-	fmt.Println("[1/5] Copying binary to /usr/local/bin/gopm...")
+	// [1/5] Symlink binary to /usr/local/bin/gopm.
+	fmt.Println("[1/5] Linking binary to /usr/local/bin/gopm...")
 	self, err := os.Executable()
 	if err != nil {
 		outputError(fmt.Sprintf("cannot find gopm binary: %v", err))
 	}
-	self, _ = filepath.EvalSymlinks(self)
-
-	input, err := os.ReadFile(self)
+	self, err = filepath.EvalSymlinks(self)
 	if err != nil {
-		outputError(fmt.Sprintf("cannot read binary: %v", err))
+		outputError(fmt.Sprintf("cannot resolve binary path: %v", err))
 	}
-	if err := os.WriteFile("/usr/local/bin/gopm", input, 0755); err != nil {
-		outputError(fmt.Sprintf("cannot write binary: %v", err))
+	self, _ = filepath.Abs(self)
+
+	const installPath = "/usr/local/bin/gopm"
+	if self == installPath {
+		fmt.Println("  binary already at /usr/local/bin/gopm, skipping")
+	} else {
+		// Remove existing file or symlink before creating a new one.
+		os.Remove(installPath)
+		if err := os.Symlink(self, installPath); err != nil {
+			outputError(fmt.Sprintf("cannot create symlink: %v", err))
+		}
+		fmt.Printf("  %s → %s\n", installPath, self)
 	}
 
 	// [2/5] Write systemd unit file.
@@ -141,25 +149,31 @@ func runUninstall(cmd *cobra.Command, args []string) {
 		outputError("this command must be run as root (use sudo)")
 	}
 
-	// [1/4] Stop the service.
-	fmt.Println("[1/4] Stopping gopm service...")
+	// [1/5] Stop the service.
+	fmt.Println("[1/5] Stopping gopm service...")
 	// Ignore errors — the service may not be running.
 	exec.Command("systemctl", "stop", "gopm").CombinedOutput()
 
-	// [2/4] Disable the service.
-	fmt.Println("[2/4] Disabling gopm service...")
+	// [2/5] Disable the service.
+	fmt.Println("[2/5] Disabling gopm service...")
 	exec.Command("systemctl", "disable", "gopm").CombinedOutput()
 
-	// [3/4] Remove unit file.
-	fmt.Println("[3/4] Removing unit file...")
+	// [3/5] Remove unit file.
+	fmt.Println("[3/5] Removing unit file...")
 	if err := os.Remove(unitFilePath); err != nil && !os.IsNotExist(err) {
 		outputError(fmt.Sprintf("cannot remove unit file: %v", err))
 	}
 
-	// [4/4] Reload systemd daemon.
-	fmt.Println("[4/4] Reloading systemd daemon...")
+	// [4/5] Reload systemd daemon.
+	fmt.Println("[4/5] Reloading systemd daemon...")
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		outputError(fmt.Sprintf("daemon-reload failed: %v\n%s", err, out))
+	}
+
+	// [5/5] Remove symlink from /usr/local/bin.
+	fmt.Println("[5/5] Removing /usr/local/bin/gopm...")
+	if err := os.Remove("/usr/local/bin/gopm"); err != nil && !os.IsNotExist(err) {
+		outputError(fmt.Sprintf("cannot remove symlink: %v", err))
 	}
 
 	fmt.Println("gopm systemd service removed")
