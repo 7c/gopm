@@ -68,6 +68,10 @@ var configShowCmd = &cobra.Command{
 				out["daemon_config_file"] = daemonConfigFile
 				out["daemon_config_source"] = daemonConfigSource
 			}
+			if isSystemdInstalled() {
+				out["systemd_installed"] = true
+				out["systemd_unit_file"] = unitFilePath
+			}
 			data, _ := json.MarshalIndent(out, "", "  ")
 			fmt.Println(string(data))
 			return
@@ -118,6 +122,12 @@ var configShowCmd = &cobra.Command{
 			fmt.Printf("  Telegraf:     disabled\n")
 		}
 
+		// Check for systemd installation
+		if isSystemdInstalled() {
+			fmt.Printf("\n%s\n", display.Bold("Systemd:"))
+			fmt.Printf("  Installed:    %s\n", display.Yellow("yes")+" ("+unitFilePath+")")
+		}
+
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "\nWARNING: %s\n", w)
 		}
@@ -126,6 +136,12 @@ var configShowCmd = &cobra.Command{
 
 func init() {
 	configShowCmd.Flags().BoolVar(&configValidate, "validate", false, "validate config only")
+}
+
+// isSystemdInstalled checks if gopm is installed as a systemd service.
+func isSystemdInstalled() bool {
+	_, err := os.Stat(unitFilePath)
+	return err == nil
 }
 
 // getDaemonConfig queries the running daemon for its config file.

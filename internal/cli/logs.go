@@ -52,7 +52,7 @@ var (
 
 func init() {
 	f := logsCmd.Flags()
-	f.IntVar(&logsLines, "lines", 20, "number of lines to display")
+	f.IntVarP(&logsLines, "lines", "n", 20, "number of lines to display")
 	f.BoolVarP(&logsFollow, "follow", "f", false, "follow log output")
 	f.BoolVar(&logsErr, "err", false, "show only error log")
 }

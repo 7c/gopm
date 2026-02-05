@@ -23,9 +23,17 @@ type TestEnv struct {
 }
 
 // NewTestEnv creates an isolated test environment.
+// We use a short temp directory under /tmp instead of t.TempDir() because
+// macOS limits Unix domain socket paths to 104 characters. The default
+// Go temp dir path (/var/folders/.../T/TestLongName.../001/) can easily
+// exceed this limit with longer test names.
 func NewTestEnv(t *testing.T) *TestEnv {
 	t.Helper()
-	home := t.TempDir()
+	home, err := os.MkdirTemp("/tmp", "gp-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
 
 	gopmBin := filepath.Join(BinDir(), "gopm")
 	testappBin := filepath.Join(BinDir(), "testapp")

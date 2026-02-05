@@ -1,19 +1,21 @@
 # GoPM
 
-A lightweight, zero-telemetry process manager written in Go. Single static binary, no runtime dependencies.
+A lightweight process manager written in Go. Single static binary, no runtime dependencies.
 
-GoPM is a minimal alternative to PM2 for managing long-running processes on Linux servers. It does exactly what you need — start processes, keep them alive, rotate logs — without the bloat, telemetry, or Node.js dependency.
+GoPM is a minimal alternative to PM2 for managing long-running processes on Linux servers. It does exactly what you need — start processes, keep them alive, rotate logs — without the bloat or Node.js dependency.
 
 ---
 
 ## Why GoPM?
 
 - **Single binary** — drop it on any Linux box, no runtime needed
-- **Zero telemetry** — no phone-home, no analytics, no tracking
 - **Zero runtime dependencies** — no Node.js, no npm, no Python
 - **Small footprint** — minimal, well-vetted Go libraries; no bloat
 - **Familiar CLI** — if you've used PM2, you already know GoPM
 - **Script-friendly** — `--json` output and `isrunning` exit codes for automation
+- **AI-ready** — embedded MCP HTTP server for Claude and other AI tools
+- **Optional telemetry** — opt-in Telegraf/InfluxDB metrics export
+- **Configurable** — JSON config file for logs, MCP, and telemetry settings
 
 ---
 
@@ -457,71 +459,80 @@ Flags:
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). The GUI is a pure client — it uses the same Unix socket IPC as the CLI.
 
-### `gopm mcp`
+### `gopm config`
 
-Start an MCP (Model Context Protocol) server for AI agent integration.
+Show the resolved configuration, including what config file the running daemon loaded.
 
 ```
 Usage:
-  gopm mcp [flags]
+  gopm config [flags]
 
 Flags:
-  --transport string    Transport mode: stdio (default: stdio)
+  --validate    Validate config only
+  --json        Output as JSON
 ```
 
-The MCP server exposes GoPM's full process management capabilities to AI tools like Claude, allowing natural language process management.
+**Examples:**
 
-**Setup (claude_desktop_config.json or Claude Code):**
-
-```json
-{
-  "mcpServers": {
-    "gopm": {
-      "command": "gopm",
-      "args": ["mcp"]
-    }
-  }
-}
+```bash
+gopm config                    # show resolved config
+gopm config --validate         # check config for errors
+gopm config --json             # machine-readable output
 ```
 
-**Exposed tools:**
-
-| Tool | Description |
-|------|-------------|
-| `gopm_list` | List all managed processes |
-| `gopm_start` | Start a new process |
-| `gopm_stop` | Stop a process |
-| `gopm_restart` | Restart a process |
-| `gopm_delete` | Stop and remove a process |
-| `gopm_describe` | Detailed process info |
-| `gopm_logs` | Get recent log lines |
-| `gopm_flush` | Clear log files |
-| `gopm_save` | Save process list |
-| `gopm_resurrect` | Restore saved processes |
-| `gopm_start_ecosystem` | Start from ecosystem JSON |
-
-**Exposed resources:**
-
-| Resource | URI |
-|----------|-----|
-| Process list | `gopm://processes` |
-| Process detail | `gopm://process/{name}` |
-| Stdout logs | `gopm://logs/{name}/stdout` |
-| Stderr logs | `gopm://logs/{name}/stderr` |
-| Daemon status | `gopm://status` |
-
-**Example AI interactions:**
+**Output:**
 
 ```
-You: "Show me what's running on this server"
-→ Claude calls gopm_list → formatted process table
+Config file:  /home/deploy/.gopm/gopm.config.json (gopm-home)
+Daemon using: /home/deploy/.gopm/gopm.config.json (gopm-home)
 
-You: "The API keeps crashing, show me the last 100 lines of stderr"
-→ Claude calls gopm_logs(target="api", lines=100, err=true) → analyzes logs
+Logs:
+  Directory:    /home/deploy/.gopm/logs
+  Max size:     1.0 MB
+  Max files:    3
 
-You: "Restart the worker with exponential backoff"
-→ Claude calls gopm_stop then gopm_start with exp_backoff=true
+MCP HTTP Server:
+  Enabled:      yes
+  Bind:         [127.0.0.1:9512 (loopback)]
+  URI:          /mcp
+
+Telemetry:
+  Telegraf:     disabled
 ```
+
+### `gopm pid`
+
+Deep process inspection tool. Reads `/proc` directly — works on any Linux process, not just gopm-managed ones. Does not require the daemon for basic operation.
+
+```
+Usage:
+  gopm pid <pid> [flags]
+
+Flags:
+  --json    Output as JSON object
+  --tree    Show only the process tree (parent chain)
+  --fds     Show only open file descriptors
+  --env     Show only environment variables
+  --net     Show only network sockets
+  --raw     Show raw /proc file contents for debugging
+```
+
+**Examples:**
+
+```bash
+gopm pid 4521                 # full inspection
+gopm pid 4521 --json          # JSON output for scripting
+gopm pid 4521 --tree          # parent chain only
+gopm pid 4521 --fds           # open files only
+gopm pid 4521 --env           # environment only
+gopm pid $$                   # inspect your own shell
+```
+
+**Exit codes:**
+- `0` — PID exists and was inspected
+- `1` — PID does not exist or is not readable
+
+If the gopm daemon is running and the PID belongs to a managed process, extra metadata (name, restarts, log paths) is shown in the GoPM Info section.
 
 ---
 
@@ -756,6 +767,136 @@ sudo gopm uninstall
 
 ---
 
+## Configuration
+
+GoPM uses an optional JSON config file (`gopm.config.json`) for daemon settings. Config search order:
+
+1. `--config <path>` flag (CLI and daemon)
+2. `~/.gopm/gopm.config.json`
+3. `/etc/gopm.config.json`
+4. Defaults (no config file needed)
+
+### Example config
+
+```json
+{
+  "logs": {
+    "directory": "/var/log/gopm",
+    "max_size": "5M",
+    "max_files": 5
+  },
+  "mcp_server": {
+    "bind": ["127.0.0.1:9512"],
+    "uri": "/mcp"
+  },
+  "telemetry": {
+    "telegraf": {
+      "addr": "127.0.0.1:8094",
+      "measurement": "gopm"
+    }
+  }
+}
+```
+
+### Three-state config
+
+Each section supports three states:
+- **Absent** — use defaults
+- **`null`** — explicitly disabled
+- **`{...}`** — configured with custom values
+
+```json
+{ "mcp_server": null }
+```
+
+This disables the MCP HTTP server even if it would otherwise use defaults.
+
+---
+
+## MCP HTTP Server (AI Integration)
+
+GoPM embeds an MCP (Model Context Protocol) HTTP server inside the daemon. When enabled, AI tools like Claude can manage processes via HTTP.
+
+The MCP server uses the Streamable HTTP transport: `POST /mcp` for JSON-RPC 2.0 requests, `GET /health` for health checks.
+
+### Enable via config
+
+```json
+{
+  "mcp_server": {
+    "bind": ["127.0.0.1:9512"],
+    "uri": "/mcp"
+  }
+}
+```
+
+### Exposed tools
+
+| Tool | Description |
+|------|-------------|
+| `gopm_ping` | Check daemon status |
+| `gopm_list` | List all managed processes |
+| `gopm_start` | Start a new process |
+| `gopm_stop` | Stop a process |
+| `gopm_restart` | Restart a process |
+| `gopm_delete` | Stop and remove a process |
+| `gopm_describe` | Detailed process info |
+| `gopm_isrunning` | Check if process is running |
+| `gopm_logs` | Get recent log lines |
+| `gopm_flush` | Clear log files |
+| `gopm_save` | Save process list |
+| `gopm_resurrect` | Restore saved processes |
+| `gopm_pid` | Deep /proc inspection of any PID (Linux only) |
+
+### Exposed resources
+
+| Resource | URI |
+|----------|-----|
+| Process list | `gopm://processes` |
+| Process detail | `gopm://process/{name}` |
+| Stdout logs | `gopm://logs/{name}/stdout` |
+| Stderr logs | `gopm://logs/{name}/stderr` |
+| Daemon status | `gopm://status` |
+
+### Example AI interactions
+
+```
+You: "Show me what's running on this server"
+→ Claude calls gopm_list → formatted process table
+
+You: "The API keeps crashing, show me the last 100 lines of stderr"
+→ Claude calls gopm_logs(target="api", lines=100, err=true) → analyzes logs
+
+You: "Who started process 4521? Show me the chain"
+→ Claude calls gopm_pid(pid=4521, sections=["tree"]) → process ancestry
+```
+
+---
+
+## Telegraf Telemetry
+
+GoPM can optionally export per-process and daemon-level metrics to Telegraf via InfluxDB line protocol over UDP. Metrics are emitted every 2 seconds alongside the normal metrics sampling.
+
+### Enable via config
+
+```json
+{
+  "telemetry": {
+    "telegraf": {
+      "addr": "127.0.0.1:8094",
+      "measurement": "gopm"
+    }
+  }
+}
+```
+
+### Metrics exported
+
+**Per-process:** `cpu`, `memory`, `restarts`, `status`, `uptime_seconds`
+**Daemon summary:** `total_processes`, `online_count`, `stopped_count`, `errored_count`, `daemon_uptime_seconds`
+
+---
+
 ## Architecture
 
 GoPM uses a two-process model:
@@ -770,7 +911,9 @@ Daemon (long-lived background process)
   ├── Process Supervisor (restart logic, signal handling)
   ├── Metrics Sampler (CPU/mem from /proc, every 2s)
   ├── Log Writers (rotating stdout/stderr capture)
-  └── State Manager (dump.json persistence)
+  ├── State Manager (dump.json persistence)
+  ├── MCP HTTP Server (optional, for AI tool integration)
+  └── Telegraf Emitter (optional, InfluxDB line protocol over UDP)
       │
       ├── child process 0 (your app)
       ├── child process 1 (your worker)
@@ -783,9 +926,11 @@ The **daemon auto-starts** on the first CLI command if not already running. No m
 
 ```
 ~/.gopm/
-├── gopm.sock       # Unix domain socket (IPC)
-├── daemon.pid      # Daemon PID file
-├── dump.json       # Saved process list (for resurrect)
+├── gopm.config.json  # Optional config file (also searched in /etc/)
+├── gopm.sock         # Unix domain socket (IPC)
+├── daemon.pid        # Daemon PID file
+├── daemon.log        # Daemon log file
+├── dump.json         # Saved process list (for resurrect)
 └── logs/
     ├── api-out.log
     ├── api-err.log
@@ -899,18 +1044,22 @@ gopm/
 │   └── main.go
 ├── internal/
 │   ├── cli/               # Command implementations
-│   │   ├── start.go
-│   │   ├── stop.go
-│   │   ├── restart.go
-│   │   ├── delete.go
-│   │   ├── list.go
-│   │   ├── describe.go
-│   │   ├── logs.go
-│   │   ├── flush.go
-│   │   ├── save.go
-│   │   ├── install.go
-│   │   ├── ping.go
-│   │   └── kill.go
+│   │   ├── root.go        # Root command, flag setup, daemon detection
+│   │   ├── start.go       # Start processes and ecosystem files
+│   │   ├── stop.go        # Stop processes
+│   │   ├── restart.go     # Restart processes
+│   │   ├── delete.go      # Delete processes
+│   │   ├── list.go        # List processes
+│   │   ├── describe.go    # Detailed process info
+│   │   ├── logs.go        # View/follow logs
+│   │   ├── flush.go       # Clear logs
+│   │   ├── save.go        # Save/resurrect process list
+│   │   ├── install.go     # Systemd service install/uninstall
+│   │   ├── ping.go        # Daemon health check
+│   │   ├── kill.go        # Kill daemon
+│   │   ├── config.go      # Show resolved configuration
+│   │   ├── pid.go         # Deep /proc process inspection (Linux)
+│   │   └── pid_stub.go    # Stub for non-Linux platforms
 │   ├── gui/               # Terminal UI (Bubble Tea)
 │   │   ├── gui.go         # Main model & update loop
 │   │   ├── processlist.go # Process table component
@@ -918,22 +1067,31 @@ gopm/
 │   │   ├── detail.go      # Process describe overlay
 │   │   ├── input.go       # Start-process input prompt
 │   │   └── styles.go      # Lipgloss colors & styles
-│   ├── mcp/               # MCP server
-│   │   ├── server.go      # Stdio JSON-RPC loop
-│   │   ├── tools.go       # Tool definitions & handlers
-│   │   ├── resources.go   # Resource definitions & handlers
-│   │   └── schema.go      # JSON Schema for tool inputs
+│   ├── mcphttp/           # Embedded MCP HTTP server
+│   │   ├── server.go      # HTTP server, JSON-RPC dispatch
+│   │   ├── tools.go       # Tool & resource definitions
+│   │   ├── pid_linux.go   # gopm_pid tool handler (Linux)
+│   │   └── pid_other.go   # gopm_pid stub (non-Linux)
 │   ├── daemon/            # Daemon process
-│   │   ├── daemon.go      # Main loop, socket listener
+│   │   ├── daemon.go      # Main loop, socket listener, config
 │   │   ├── process.go     # Process lifecycle
-│   │   ├── supervisor.go  # Restart logic
-│   │   ├── metrics.go     # CPU/mem from /proc
-│   │   └── state.go       # dump.json persistence
+│   │   ├── supervisor.go  # Restart logic, action logging
+│   │   ├── metrics.go     # CPU/mem sampling + telegraf emit
+│   │   └── state.go       # dump.json persistence, resurrect
 │   ├── client/            # CLI→daemon IPC client
-│   ├── protocol/          # JSON-RPC message types
-│   ├── config/            # Ecosystem JSON parser
+│   ├── protocol/          # JSON-RPC message types & helpers
+│   ├── config/            # Config file loader & resolver
+│   │   ├── config.go      # Load gopm.config.json
+│   │   ├── resolve.go     # Resolve config values, bind addrs
+│   │   └── ecosystem.go   # Ecosystem JSON parser
+│   ├── procinspect/       # /proc process inspector (Linux only)
+│   │   ├── types.go       # Data types
+│   │   ├── inspect.go     # /proc parsers
+│   │   └── format.go      # Table formatter
+│   ├── telemetry/         # Metrics export
+│   │   └── telegraf.go    # InfluxDB line protocol over UDP
 │   ├── logwriter/         # Rotating log writer
-│   └── display/           # Table formatting
+│   └── display/           # Table formatting & ANSI colors
 ├── test/
 │   ├── testapp/           # Configurable test binary
 │   ├── fixtures/          # Ecosystem JSON fixtures
@@ -955,9 +1113,9 @@ gopm/
 | Package | Purpose |
 |---------|---------|
 | `github.com/spf13/cobra` | CLI framework (industry standard) |
-| `github.com/olekukonez/tablewriter` | Table output with box-drawing |
 | `encoding/json` (stdlib) | JSON parsing |
 | `net` (stdlib) | Unix socket IPC |
+| `net/http` (stdlib) | Embedded MCP HTTP server |
 | `os/exec` (stdlib) | Process execution |
 | `os/signal`, `syscall` (stdlib) | Signal handling |
 | `log/slog` (stdlib) | Structured logging |
@@ -968,13 +1126,8 @@ gopm/
 |---------|---------|
 | `github.com/charmbracelet/bubbletea` | TUI framework |
 | `github.com/charmbracelet/lipgloss` | TUI styling |
-| `github.com/charmbracelet/bubbles` | Table, viewport, text input components |
 
-**MCP** (only pulled in by `gopm mcp`):
-
-| Package | Purpose |
-|---------|---------|
-| `github.com/mark3labs/mcp-go` | MCP protocol (or hand-rolled — JSON-RPC 2.0 over stdio is simple enough) |
+**No external MCP dependencies** — the embedded MCP HTTP server is hand-rolled JSON-RPC 2.0 over HTTP using stdlib `net/http`.
 
 ---
 
@@ -995,6 +1148,9 @@ gopm/
 | Max disk/process | `~8 MB` | (1+3 files) × 2 streams |
 | Metrics interval | `2s` | CPU/memory sampling |
 | Socket path | `~/.gopm/gopm.sock` | IPC endpoint |
+| MCP HTTP server | disabled | Enable via config |
+| Telegraf telemetry | disabled | Enable via config |
+| Config search | `~/.gopm/` → `/etc/` | Config file locations |
 
 ---
 
@@ -1005,9 +1161,8 @@ Intentionally out of scope to keep it lean:
 - Cluster mode / multi-instance
 - Built-in load balancer
 - Remote deployment / multi-host
-- Web dashboard / HTTP API (use `gopm gui` for interactive management, `gopm mcp` for AI integration)
+- Web dashboard (use `gopm gui` for interactive management, MCP HTTP for AI integration)
 - Module system / plugins
-- Telemetry / metrics export
 - Log shipping to external services
 - Windows support
 - Container mode
