@@ -75,6 +75,13 @@ func Run(version string) {
 
 	slog.Info("daemon started", "pid", os.Getpid(), "socket", sockPath, "version", Version)
 
+	// Auto-load saved process list from dump.json
+	if resurrected, err := d.ResurrectProcesses(); err != nil {
+		slog.Error("failed to resurrect processes on startup", "error", err)
+	} else if len(resurrected) > 0 {
+		slog.Info("auto-resurrected processes on startup", "count", len(resurrected))
+	}
+
 	// Handle signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -374,6 +381,38 @@ func (d *Daemon) handleLogs(params json.RawMessage) protocol.Response {
 		return errorResponse("invalid logs params: " + err.Error())
 	}
 
+	lines := lp.Lines
+	if lines <= 0 {
+		lines = 20
+	}
+
+	// Support "all" target by aggregating logs from every process.
+	if lp.Target == "all" {
+		d.mu.RLock()
+		var parts []string
+		for _, p := range d.processes {
+			info := p.Info()
+			logPath := info.LogOut
+			if lp.ErrOnly {
+				logPath = info.LogErr
+			}
+			content, err := tailFile(logPath, lines)
+			if err != nil {
+				continue
+			}
+			if content != "" {
+				header := fmt.Sprintf("==> %s <==", info.Name)
+				parts = append(parts, header+"\n"+content)
+			}
+		}
+		d.mu.RUnlock()
+		combined := strings.Join(parts, "\n\n")
+		return successResponse(map[string]interface{}{
+			"content":  combined,
+			"log_path": "",
+		})
+	}
+
 	proc := d.findProcess(lp.Target)
 	if proc == nil {
 		return errorResponse(fmt.Sprintf("process %q not found", lp.Target))
@@ -383,11 +422,6 @@ func (d *Daemon) handleLogs(params json.RawMessage) protocol.Response {
 	logPath := info.LogOut
 	if lp.ErrOnly {
 		logPath = info.LogErr
-	}
-
-	lines := lp.Lines
-	if lines <= 0 {
-		lines = 20
 	}
 
 	content, err := tailFile(logPath, lines)

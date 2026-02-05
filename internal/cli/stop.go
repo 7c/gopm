@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,6 @@ func runStop(cmd *cobra.Command, args []string) {
 	if jsonOutput {
 		fmt.Println(string(resp.Data))
 	} else {
-		fmt.Printf("Process %s stopped\n", target)
+		fmt.Printf("Process %s %s\n", display.Bold(target), display.Yellow("stopped"))
 	}
 }

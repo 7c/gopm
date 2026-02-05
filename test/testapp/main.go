@@ -151,11 +151,16 @@ func main() {
 		}()
 	}
 
-	// --- Default: run forever ---
+	// --- Default: run forever (block on signal) ---
 	if *runForever || (*exitAfter == 0 && *crashAfter == 0 && *crashRandom == 0 && *panicAfter == 0) {
-		select {}
+		waitCh := make(chan os.Signal, 1)
+		signal.Notify(waitCh, syscall.SIGINT, syscall.SIGTERM)
+		<-waitCh
+		os.Exit(0)
 	}
 
 	// Wait for exit triggers
-	select {}
+	waitCh := make(chan os.Signal, 1)
+	signal.Notify(waitCh, syscall.SIGINT, syscall.SIGTERM)
+	<-waitCh
 }

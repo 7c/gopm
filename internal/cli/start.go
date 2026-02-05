@@ -9,6 +9,7 @@ import (
 
 	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/config"
+	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
@@ -129,7 +130,7 @@ func startEcosystem(path string) {
 		} else {
 			var info protocol.ProcessInfo
 			if err := json.Unmarshal(resp.Data, &info); err == nil {
-				fmt.Printf("Process %s started (PID: %d)\n", info.Name, info.PID)
+				fmt.Printf("Process %s %s (PID: %s)\n", display.Bold(info.Name), display.Green("started"), display.Cyan(fmt.Sprintf("%d", info.PID)))
 			}
 		}
 	}
@@ -205,7 +206,7 @@ func startSingle(command string, childArgs []string) {
 	} else {
 		var info protocol.ProcessInfo
 		if err := json.Unmarshal(resp.Data, &info); err == nil {
-			fmt.Printf("Process %s started (PID: %d)\n", info.Name, info.PID)
+			fmt.Printf("Process %s %s (PID: %s)\n", display.Bold(info.Name), display.Green("started"), display.Cyan(fmt.Sprintf("%d", info.PID)))
 		}
 	}
 }

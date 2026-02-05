@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
@@ -41,7 +42,11 @@ func runSave(cmd *cobra.Command, args []string) {
 	if jsonOutput {
 		outputJSON(resp.Data)
 	} else {
-		fmt.Println("Process list saved")
+		var result struct {
+			Count int `json:"count"`
+		}
+		json.Unmarshal(resp.Data, &result)
+		fmt.Printf("Process list %s (%d processes) to %s\n", display.Green("saved"), result.Count, display.Dim(protocol.DumpFilePath()))
 	}
 }
 
@@ -70,5 +75,5 @@ func runResurrect(cmd *cobra.Command, args []string) {
 		outputError(fmt.Sprintf("failed to parse response: %v", err))
 	}
 
-	fmt.Printf("Resurrected %d processes\n", len(procs))
+	fmt.Printf("%s %d processes\n", display.Green("Resurrected"), len(procs))
 }

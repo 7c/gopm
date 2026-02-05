@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,6 @@ func runFlush(cmd *cobra.Command, args []string) {
 	if jsonOutput {
 		outputJSON(resp.Data)
 	} else {
-		fmt.Printf("Logs flushed for %s\n", target)
+		fmt.Printf("Logs flushed for %s\n", display.Bold(target))
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/display"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +35,6 @@ var killCmd = &cobra.Command{
 			}
 		}
 
-		fmt.Println("gopm daemon stopped")
+		fmt.Printf("%s daemon %s\n", display.Bold("gopm"), display.Yellow("stopped"))
 	},
 }

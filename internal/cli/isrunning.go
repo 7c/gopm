@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
@@ -41,7 +42,7 @@ var isrunningCmd = &cobra.Command{
 			if jsonOutput {
 				outputJSON(resp.Data)
 			} else {
-				fmt.Printf("%s: not found\n", target)
+				fmt.Printf("%s: %s\n", display.Bold(target), display.Dim("not found"))
 			}
 			os.Exit(1)
 		}
@@ -50,7 +51,7 @@ var isrunningCmd = &cobra.Command{
 			if jsonOutput {
 				outputJSON(resp.Data)
 			} else {
-				fmt.Printf("%s: online (PID %d, uptime %s)\n", result.Name, result.PID, result.Uptime)
+				fmt.Printf("%s: %s (PID %s, uptime %s)\n", display.Bold(result.Name), display.Green("online"), display.Cyan(fmt.Sprintf("%d", result.PID)), result.Uptime)
 			}
 			os.Exit(0)
 		}
@@ -59,7 +60,7 @@ var isrunningCmd = &cobra.Command{
 		if jsonOutput {
 			outputJSON(resp.Data)
 		} else {
-			fmt.Printf("%s: %s (exit code %d, %d restarts)\n", result.Name, result.Status, result.ExitCode, result.Restarts)
+			fmt.Printf("%s: %s (exit code %d, %d restarts)\n", display.Bold(result.Name), display.StatusColor(string(result.Status)), result.ExitCode, result.Restarts)
 		}
 		os.Exit(1)
 	},

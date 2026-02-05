@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 )
 
 // RotatingWriter implements io.Writer with size-based log rotation.
@@ -126,4 +127,56 @@ func (w *RotatingWriter) Truncate() error {
 // Path returns the file path of this writer.
 func (w *RotatingWriter) Path() string {
 	return w.path
+}
+
+// TimestampWriter wraps an io.Writer and prepends a timestamp to each line.
+// It buffers partial lines until a newline is received.
+type TimestampWriter struct {
+	w   *RotatingWriter
+	buf []byte
+	mu  sync.Mutex
+}
+
+// NewTimestampWriter creates a writer that prefixes each line with a timestamp.
+func NewTimestampWriter(w *RotatingWriter) *TimestampWriter {
+	return &TimestampWriter{w: w}
+}
+
+func (tw *TimestampWriter) Write(p []byte) (int, error) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+
+	total := len(p)
+	for len(p) > 0 {
+		idx := -1
+		for i, b := range p {
+			if b == '\n' {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			// No newline — buffer the partial line.
+			tw.buf = append(tw.buf, p...)
+			break
+		}
+
+		// Complete line found: buf + p[:idx+1]
+		line := append(tw.buf, p[:idx+1]...)
+		tw.buf = nil
+
+		ts := time.Now().Format("2006-01-02T15:04:05.000Z07:00")
+		stamped := append([]byte(ts+" "), line...)
+		if _, err := tw.w.Write(stamped); err != nil {
+			return 0, err
+		}
+
+		p = p[idx+1:]
+	}
+	return total, nil
+}
+
+// Underlying returns the inner RotatingWriter (for Close/Truncate).
+func (tw *TimestampWriter) Underlying() *RotatingWriter {
+	return tw.w
 }

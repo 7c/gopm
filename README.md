@@ -800,29 +800,46 @@ The **daemon auto-starts** on the first CLI command if not already running. No m
 ### Requirements
 
 - Go 1.22+
-- Linux (Ubuntu 20.04+ recommended)
+- Linux or macOS
 
-### Build
+### Build with Make
 
 ```bash
-git clone https://github.com/yourname/gopm.git
+git clone https://github.com/7c/gopm.git
 cd gopm
 
+# Static binary for current platform (output: bin/gopm)
+make build
+
+# Build with custom version
+make build VERSION=1.0.0
+
+# Cross-compile all platforms (output: bin/gopm-{os}-{arch})
+make build-all
+
+# Build a specific platform
+make build-linux-amd64
+make build-linux-arm64
+make build-darwin-amd64
+make build-darwin-arm64
+```
+
+All builds produce **fully static binaries** (`CGO_ENABLED=0`) with stripped symbols (`-s -w`). No runtime dependencies — just copy the binary to your server.
+
+### Build manually
+
+```bash
 # Development build
 go build -o gopm ./cmd/gopm/
 
-# Production build (stripped, static)
+# Production build (stripped, static, versioned)
 CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=0.1.0" -o gopm ./cmd/gopm/
-
-# Cross-compile
-GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o gopm-linux-amd64 ./cmd/gopm/
-GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o gopm-linux-arm64 ./cmd/gopm/
 ```
 
 ### Install
 
 ```bash
-sudo mv gopm /usr/local/bin/
+sudo cp bin/gopm /usr/local/bin/
 sudo gopm install
 ```
 
@@ -992,7 +1009,7 @@ Intentionally out of scope to keep it lean:
 - Module system / plugins
 - Telemetry / metrics export
 - Log shipping to external services
-- Windows / macOS support
+- Windows support
 - Container mode
 - Watch mode (file-change auto-restart)
 - Git-based deployment

@@ -12,7 +12,8 @@ import (
 // Table renders bordered tables for CLI output.
 type Table struct {
 	headers []string
-	rows    [][]string
+	rows    [][]string // raw values (no color) for width calculation
+	colored [][]string // colored values for rendering
 	widths  []int
 }
 
@@ -25,7 +26,7 @@ func NewTable(headers ...string) *Table {
 	return &Table{headers: headers, widths: widths}
 }
 
-// AddRow adds a row to the table.
+// AddRow adds a row to the table. raw values are used for width; colored for display.
 func (t *Table) AddRow(cols ...string) {
 	for i, c := range cols {
 		if i < len(t.widths) && len(c) > t.widths[i] {
@@ -33,138 +34,200 @@ func (t *Table) AddRow(cols ...string) {
 		}
 	}
 	t.rows = append(t.rows, cols)
+	t.colored = append(t.colored, cols) // default: same as raw
 }
 
-// Render writes the table to the given writer.
+// AddColoredRow adds a row with separate raw (for widths) and colored (for display) values.
+func (t *Table) AddColoredRow(raw []string, colored []string) {
+	for i, c := range raw {
+		if i < len(t.widths) && len(c) > t.widths[i] {
+			t.widths[i] = len(c)
+		}
+	}
+	t.rows = append(t.rows, raw)
+	t.colored = append(t.colored, colored)
+}
+
+// Render writes the table to the given writer with dim borders and bold headers.
 func (t *Table) Render(w io.Writer) {
 	if len(t.rows) == 0 && len(t.headers) == 0 {
 		return
 	}
 	t.line(w, "┌", "┬", "┐")
-	t.row(w, t.headers)
+	t.headerRow(w)
 	t.line(w, "├", "┼", "┤")
-	for _, r := range t.rows {
-		t.row(w, r)
+	for i := range t.rows {
+		t.coloredRow(w, t.rows[i], t.colored[i])
 	}
 	t.line(w, "└", "┴", "┘")
 }
 
 func (t *Table) line(w io.Writer, left, mid, right string) {
-	fmt.Fprint(w, left)
+	fmt.Fprint(w, dim+left)
 	for i, width := range t.widths {
 		fmt.Fprint(w, strings.Repeat("─", width+2))
 		if i < len(t.widths)-1 {
 			fmt.Fprint(w, mid)
 		}
 	}
-	fmt.Fprintln(w, right)
+	fmt.Fprintln(w, right+reset)
 }
 
-func (t *Table) row(w io.Writer, cols []string) {
-	fmt.Fprint(w, "│")
+func (t *Table) headerRow(w io.Writer) {
+	fmt.Fprint(w, dim+"│"+reset)
 	for i, width := range t.widths {
-		val := ""
-		if i < len(cols) {
-			val = cols[i]
+		h := ""
+		if i < len(t.headers) {
+			h = t.headers[i]
 		}
-		fmt.Fprintf(w, " %-*s │", width, val)
+		fmt.Fprintf(w, " "+bold+"%-*s"+reset+" "+dim+"│"+reset, width, h)
 	}
 	fmt.Fprintln(w)
 }
 
-// RenderProcessList renders the process list table.
+func (t *Table) coloredRow(w io.Writer, rawCols, colorCols []string) {
+	fmt.Fprint(w, dim+"│"+reset)
+	for i, width := range t.widths {
+		raw := ""
+		col := ""
+		if i < len(rawCols) {
+			raw = rawCols[i]
+		}
+		if i < len(colorCols) {
+			col = colorCols[i]
+		}
+		// Pad based on raw (visible) length
+		padding := width - len(raw)
+		if padding < 0 {
+			padding = 0
+		}
+		fmt.Fprintf(w, " %s%*s "+dim+"│"+reset, col, padding, "")
+	}
+	fmt.Fprintln(w)
+}
+
+// RenderProcessList renders the process list table with colored status.
 func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 	tbl := NewTable("ID", "Name", "Status", "PID", "CPU", "Memory", "Restart", "Uptime")
 	for _, p := range procs {
-		pid := "-"
-		cpu := "-"
-		mem := "-"
-		uptime := "-"
+		pid := Dim("-")
+		cpu := Dim("-")
+		mem := Dim("-")
+		uptime := Dim("-")
+		rawPid := "-"
+		rawCpu := "-"
+		rawMem := "-"
+		rawUptime := "-"
 		if p.Status == protocol.StatusOnline && p.PID > 0 {
-			pid = fmt.Sprintf("%d", p.PID)
-			cpu = fmt.Sprintf("%.1f%%", p.CPU)
-			mem = protocol.FormatBytes(p.Memory)
+			rawPid = fmt.Sprintf("%d", p.PID)
+			rawCpu = fmt.Sprintf("%.1f%%", p.CPU)
+			rawMem = protocol.FormatBytes(p.Memory)
+			pid = rawPid
+			cpu = rawCpu
+			mem = rawMem
 			if !p.Uptime.IsZero() {
-				uptime = protocol.FormatDuration(time.Since(p.Uptime))
+				rawUptime = protocol.FormatDuration(time.Since(p.Uptime))
+				uptime = rawUptime
 			}
 		}
-		tbl.AddRow(
+		rawStatus := string(p.Status)
+		colorStatus := StatusColor(rawStatus)
+
+		raw := []string{
 			fmt.Sprintf("%d", p.ID),
 			p.Name,
-			string(p.Status),
+			rawStatus,
+			rawPid,
+			rawCpu,
+			rawMem,
+			fmt.Sprintf("%d", p.Restarts),
+			rawUptime,
+		}
+		colored := []string{
+			Dim(fmt.Sprintf("%d", p.ID)),
+			Bold(p.Name),
+			colorStatus,
 			pid,
 			cpu,
 			mem,
 			fmt.Sprintf("%d", p.Restarts),
 			uptime,
-		)
+		}
+		tbl.AddColoredRow(raw, colored)
 	}
 	tbl.Render(w)
 }
 
-// RenderDescribe renders the describe output as a key-value table.
+// RenderDescribe renders the describe output as a key-value table with colored status.
 func RenderDescribe(w io.Writer, p protocol.ProcessInfo) {
 	tbl := NewTable("Key", "Value")
-	tbl.AddRow("Name", p.Name)
-	tbl.AddRow("ID", fmt.Sprintf("%d", p.ID))
-	tbl.AddRow("Status", string(p.Status))
+	addKV := func(k, v string) {
+		tbl.AddColoredRow([]string{k, v}, []string{Cyan(k), v})
+	}
+	addKVc := func(k, rawV, colorV string) {
+		tbl.AddColoredRow([]string{k, rawV}, []string{Cyan(k), colorV})
+	}
+
+	addKVc("Name", p.Name, Bold(p.Name))
+	addKV("ID", fmt.Sprintf("%d", p.ID))
+	addKVc("Status", string(p.Status), StatusColor(string(p.Status)))
 	if p.Status == protocol.StatusOnline && p.PID > 0 {
-		tbl.AddRow("PID", fmt.Sprintf("%d", p.PID))
+		addKV("PID", fmt.Sprintf("%d", p.PID))
 	} else {
-		tbl.AddRow("PID", "-")
+		addKVc("PID", "-", Dim("-"))
 	}
-	tbl.AddRow("Command", p.Command)
+	addKV("Command", p.Command)
 	if len(p.Args) > 0 {
-		tbl.AddRow("Args", strings.Join(p.Args, " "))
+		addKV("Args", strings.Join(p.Args, " "))
 	} else {
-		tbl.AddRow("Args", "-")
+		addKVc("Args", "-", Dim("-"))
 	}
-	tbl.AddRow("CWD", p.Cwd)
+	addKV("CWD", p.Cwd)
 	if p.Interpreter != "" {
-		tbl.AddRow("Interpreter", p.Interpreter)
+		addKV("Interpreter", p.Interpreter)
 	} else {
-		tbl.AddRow("Interpreter", "-")
+		addKVc("Interpreter", "-", Dim("-"))
 	}
 	if p.Status == protocol.StatusOnline && !p.Uptime.IsZero() {
-		tbl.AddRow("Uptime", protocol.FormatDuration(time.Since(p.Uptime)))
+		addKV("Uptime", protocol.FormatDuration(time.Since(p.Uptime)))
 	} else {
-		tbl.AddRow("Uptime", "-")
+		addKVc("Uptime", "-", Dim("-"))
 	}
-	tbl.AddRow("Created At", p.CreatedAt.Format("2006-01-02 15:04:05 MST"))
-	tbl.AddRow("Restarts", fmt.Sprintf("%d", p.Restarts))
+	addKV("Created At", p.CreatedAt.Format("2006-01-02 15:04:05 MST"))
+	addKV("Restarts", fmt.Sprintf("%d", p.Restarts))
 	if p.Status != protocol.StatusOnline {
-		tbl.AddRow("Last Exit Code", fmt.Sprintf("%d", p.ExitCode))
+		addKV("Last Exit Code", fmt.Sprintf("%d", p.ExitCode))
 	} else {
-		tbl.AddRow("Last Exit Code", "-")
+		addKVc("Last Exit Code", "-", Dim("-"))
 	}
 	if p.Status == protocol.StatusOnline && p.PID > 0 {
-		tbl.AddRow("CPU", fmt.Sprintf("%.1f%%", p.CPU))
-		tbl.AddRow("Memory", protocol.FormatBytes(p.Memory))
+		addKV("CPU", fmt.Sprintf("%.1f%%", p.CPU))
+		addKV("Memory", protocol.FormatBytes(p.Memory))
 	} else {
-		tbl.AddRow("CPU", "-")
-		tbl.AddRow("Memory", "-")
+		addKVc("CPU", "-", Dim("-"))
+		addKVc("Memory", "-", Dim("-"))
 	}
-	tbl.AddRow("Auto Restart", string(p.RestartPolicy.AutoRestart))
-	tbl.AddRow("Max Restarts", fmt.Sprintf("%d", p.RestartPolicy.MaxRestarts))
-	tbl.AddRow("Min Uptime", p.RestartPolicy.MinUptime.String())
-	tbl.AddRow("Restart Delay", p.RestartPolicy.RestartDelay.String())
-	tbl.AddRow("Exp Backoff", fmt.Sprintf("%v", p.RestartPolicy.ExpBackoff))
-	tbl.AddRow("Kill Signal", fmt.Sprintf("signal %d", p.RestartPolicy.KillSignal))
-	tbl.AddRow("Kill Timeout", p.RestartPolicy.KillTimeout.String())
-	tbl.AddRow("Stdout Log", p.LogOut)
-	tbl.AddRow("Stderr Log", p.LogErr)
+	addKV("Auto Restart", string(p.RestartPolicy.AutoRestart))
+	addKV("Max Restarts", fmt.Sprintf("%d", p.RestartPolicy.MaxRestarts))
+	addKV("Min Uptime", p.RestartPolicy.MinUptime.String())
+	addKV("Restart Delay", p.RestartPolicy.RestartDelay.String())
+	addKV("Exp Backoff", fmt.Sprintf("%v", p.RestartPolicy.ExpBackoff))
+	addKV("Kill Signal", fmt.Sprintf("signal %d", p.RestartPolicy.KillSignal))
+	addKV("Kill Timeout", p.RestartPolicy.KillTimeout.String())
+	addKV("Stdout Log", p.LogOut)
+	addKV("Stderr Log", p.LogErr)
 	if len(p.Env) > 0 {
 		first := true
 		for k, v := range p.Env {
 			if first {
-				tbl.AddRow("Env", fmt.Sprintf("%s=%s", k, v))
+				addKV("Env", fmt.Sprintf("%s=%s", k, v))
 				first = false
 			} else {
-				tbl.AddRow("", fmt.Sprintf("%s=%s", k, v))
+				addKV("", fmt.Sprintf("%s=%s", k, v))
 			}
 		}
 	} else {
-		tbl.AddRow("Env", "-")
+		addKVc("Env", "-", Dim("-"))
 	}
 	tbl.Render(w)
 }

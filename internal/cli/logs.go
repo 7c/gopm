@@ -7,19 +7,41 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
 
 var logsCmd = &cobra.Command{
-	Use:   "logs <name|id>",
-	Short: "Stream logs for a process",
-	Args:  cobra.ExactArgs(1),
-	Run:   runLogs,
+	Use:   "logs <name|id|all>",
+	Short: "Display process log output",
+	Long: `Display recent log output for a process or all processes.
+
+Each log line is prefixed with an ISO-8601 timestamp by the daemon.
+Use "all" as the target to display logs from every managed process,
+with a header separating each process.`,
+	Example: `  # Show last 20 lines of stdout (default)
+  gopm logs my-api
+
+  # Show last 100 lines
+  gopm logs my-api --lines 100
+
+  # Follow log output in real-time (like tail -f)
+  gopm logs my-api -f
+
+  # Show stderr instead of stdout
+  gopm logs my-api --err
+
+  # Show logs from all processes
+  gopm logs all
+  gopm logs all --lines 10 --err`,
+	Args: cobra.ExactArgs(1),
+	Run:  runLogs,
 }
 
 var (
@@ -69,9 +91,17 @@ func runLogs(cmd *cobra.Command, args []string) {
 		outputError(fmt.Sprintf("failed to parse log response: %v", err))
 	}
 
-	fmt.Print(result.Content)
+	fmt.Print(colorizeLogContent(result.Content))
+	if result.Content != "" && result.Content[len(result.Content)-1] != '\n' {
+		fmt.Println()
+	}
 
 	if !logsFollow {
+		return
+	}
+
+	if result.LogPath == "" {
+		// "all" target — no single file to follow.
 		return
 	}
 
@@ -102,7 +132,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 			for {
 				line, err := reader.ReadString('\n')
 				if len(line) > 0 {
-					fmt.Print(line)
+					fmt.Print(colorizeLogLine(line))
 				}
 				if err != nil {
 					break
@@ -110,4 +140,32 @@ func runLogs(cmd *cobra.Command, args []string) {
 			}
 		}
 	}
+}
+
+// colorizeLogContent applies colors to multi-line log content.
+// Dims timestamps and highlights process headers (==> name <==).
+func colorizeLogContent(content string) string {
+	if content == "" {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = colorizeLogLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// colorizeLogLine applies colors to a single log line.
+func colorizeLogLine(line string) string {
+	// Process headers from "logs all" mode: ==> name <==
+	if strings.HasPrefix(line, "==> ") && strings.HasSuffix(strings.TrimRight(line, "\n"), " <==") {
+		return display.Cyan(display.Bold(strings.TrimRight(line, "\n"))) + "\n"
+	}
+	// Dim the ISO-8601 timestamp prefix (e.g. "2026-02-05T15:39:14.739-05:00 ")
+	if len(line) > 30 && line[4] == '-' && line[10] == 'T' {
+		if idx := strings.IndexByte(line, ' '); idx > 20 && idx < 40 {
+			return display.Dim(line[:idx]) + line[idx:]
+		}
+	}
+	return line
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"log/slog"
+	"syscall"
 	"time"
 
 	"github.com/7c/gopm/internal/protocol"
@@ -39,6 +40,9 @@ func (d *Daemon) sampleMetrics() {
 				// Check if process still exists
 				if !processExists(pid) {
 					slog.Warn("process disappeared", "name", p.info.Name, "pid", pid)
+					// Send SIGKILL to the process group to ensure cmd.Wait()
+					// returns in monitor(), which triggers restart logic.
+					syscall.Kill(-pid, syscall.SIGKILL)
 					continue
 				}
 

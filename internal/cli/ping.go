@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/7c/gopm/internal/client"
+	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
@@ -48,6 +49,8 @@ var pingCmd = &cobra.Command{
 		if err := json.Unmarshal(resp.Data, &result); err != nil {
 			outputError(fmt.Sprintf("failed to parse response: %v", err))
 		}
-		fmt.Printf("gopm daemon running (PID: %d, uptime: %s, version: %s)\n", result.PID, result.Uptime, result.Version)
+		fmt.Printf("%s daemon %s (PID: %s, uptime: %s, version: %s)\n",
+			display.Bold("gopm"), display.Green("running"),
+			display.Cyan(fmt.Sprintf("%d", result.PID)), result.Uptime, display.Dim(result.Version))
 	},
 }

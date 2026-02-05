@@ -20,8 +20,8 @@ type Process struct {
 	cmd      *exec.Cmd
 	exitCh   chan struct{}
 	stopping bool
-	stdout   *logwriter.RotatingWriter
-	stderr   *logwriter.RotatingWriter
+	stdout   *logwriter.TimestampWriter
+	stderr   *logwriter.TimestampWriter
 
 	// Metrics tracking
 	lastTicks  uint64
@@ -129,17 +129,19 @@ func (p *Process) Start() error {
 	// Ensure log directory exists
 	os.MkdirAll(filepath.Dir(p.info.LogOut), 0755)
 
-	// Set up log writers
+	// Set up log writers with timestamps
 	var err error
-	p.stdout, err = logwriter.New(p.info.LogOut, p.info.MaxLogSize, 3)
+	outRot, err := logwriter.New(p.info.LogOut, p.info.MaxLogSize, 3)
 	if err != nil {
 		return fmt.Errorf("open stdout log: %w", err)
 	}
-	p.stderr, err = logwriter.New(p.info.LogErr, p.info.MaxLogSize, 3)
+	errRot, err := logwriter.New(p.info.LogErr, p.info.MaxLogSize, 3)
 	if err != nil {
-		p.stdout.Close()
+		outRot.Close()
 		return fmt.Errorf("open stderr log: %w", err)
 	}
+	p.stdout = logwriter.NewTimestampWriter(outRot)
+	p.stderr = logwriter.NewTimestampWriter(errRot)
 
 	// Build command
 	var cmd *exec.Cmd
@@ -165,8 +167,8 @@ func (p *Process) Start() error {
 	}
 
 	if err := cmd.Start(); err != nil {
-		p.stdout.Close()
-		p.stderr.Close()
+		p.stdout.Underlying().Close()
+		p.stderr.Underlying().Close()
 		return fmt.Errorf("start process: %w", err)
 	}
 
@@ -243,22 +245,22 @@ func (p *Process) MarkExited(exitCode int, status protocol.Status) {
 // CloseLogWriters closes the log writers.
 func (p *Process) CloseLogWriters() {
 	if p.stdout != nil {
-		p.stdout.Close()
+		p.stdout.Underlying().Close()
 	}
 	if p.stderr != nil {
-		p.stderr.Close()
+		p.stderr.Underlying().Close()
 	}
 }
 
 // FlushLogs truncates the log files.
 func (p *Process) FlushLogs() error {
 	if p.stdout != nil {
-		if err := p.stdout.Truncate(); err != nil {
+		if err := p.stdout.Underlying().Truncate(); err != nil {
 			return err
 		}
 	}
 	if p.stderr != nil {
-		if err := p.stderr.Truncate(); err != nil {
+		if err := p.stderr.Underlying().Truncate(); err != nil {
 			return err
 		}
 	}
