@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,18 +19,20 @@ import (
 )
 
 var logsCmd = &cobra.Command{
-	Use:   "logs <name|id|all>",
+	Use:   "logs [name|id|all]",
 	Short: "Display process log output",
 	Long: `Display recent log output for a process or all processes.
 
 Each log line is prefixed with an ISO-8601 timestamp by the daemon.
 Use "all" as the target to display logs from every managed process,
-with a header separating each process.`,
+with a header separating each process.
+
+If only one process is managed, the target can be omitted.`,
 	Example: `  # Show last 20 lines of stdout (default)
   gopm logs my-api
 
   # Show last 100 lines
-  gopm logs my-api --lines 100
+  gopm logs my-api -n 100
 
   # Follow log output in real-time (like tail -f)
   gopm logs my-api -f
@@ -39,8 +42,12 @@ with a header separating each process.`,
 
   # Show logs from all processes
   gopm logs all
-  gopm logs all --lines 10 --err`,
-	Args: cobra.ExactArgs(1),
+  gopm logs all -n 10 --err
+
+  # Omit target when only one process exists
+  gopm logs
+  gopm logs -f`,
+	Args: cobra.MaximumNArgs(1),
 	Run:  runLogs,
 }
 
@@ -48,6 +55,7 @@ var (
 	logsLines  int
 	logsFollow bool
 	logsErr    bool
+	logsDaemon bool
 )
 
 func init() {
@@ -55,9 +63,28 @@ func init() {
 	f.IntVarP(&logsLines, "lines", "n", 20, "number of lines to display")
 	f.BoolVarP(&logsFollow, "follow", "f", false, "follow log output")
 	f.BoolVar(&logsErr, "err", false, "show only error log")
+	f.BoolVarP(&logsDaemon, "daemon", "d", false, "show daemon system log")
 }
 
 func runLogs(cmd *cobra.Command, args []string) {
+	if logsDaemon {
+		showDaemonLog()
+		return
+	}
+
+	target := ""
+	if len(args) > 0 {
+		target = args[0]
+	} else {
+		// Infer target with a separate connection (each connection is one request)
+		c, err := client.NewWithConfig(configFlag)
+		if err != nil {
+			outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
+		}
+		target = inferSingleProcess(c)
+		c.Close()
+	}
+
 	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
@@ -65,7 +92,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 	defer c.Close()
 
 	params := protocol.LogsParams{
-		Target:  args[0],
+		Target:  target,
 		Lines:   logsLines,
 		ErrOnly: logsErr,
 	}
@@ -165,6 +192,92 @@ func colorizeLogLine(line string) string {
 	if len(line) > 30 && line[4] == '-' && line[10] == 'T' {
 		if idx := strings.IndexByte(line, ' '); idx > 20 && idx < 40 {
 			return display.Dim(line[:idx]) + line[idx:]
+		}
+	}
+	return line
+}
+
+// showDaemonLog reads and displays the daemon.log file directly (no daemon needed).
+func showDaemonLog() {
+	home := protocol.GopmHome()
+	logPath := filepath.Join(home, "daemon.log")
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			outputError("daemon.log not found — daemon has not started yet")
+		}
+		outputError(fmt.Sprintf("cannot read daemon.log: %v", err))
+	}
+
+	lines := strings.Split(string(data), "\n")
+	// Remove trailing empty line
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	if logsLines > 0 && len(lines) > logsLines {
+		lines = lines[len(lines)-logsLines:]
+	}
+
+	for _, line := range lines {
+		fmt.Println(colorizeDaemonLogLine(line))
+	}
+
+	if !logsFollow {
+		return
+	}
+
+	// Follow mode
+	f, err := os.Open(logPath)
+	if err != nil {
+		outputError(fmt.Sprintf("cannot open daemon.log: %v", err))
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		outputError(fmt.Sprintf("cannot seek daemon.log: %v", err))
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	reader := bufio.NewReader(f)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-sigCh:
+			return
+		case <-ticker.C:
+			for {
+				line, err := reader.ReadString('\n')
+				if len(line) > 0 {
+					fmt.Print(colorizeDaemonLogLine(line))
+				}
+				if err != nil {
+					break
+				}
+			}
+		}
+	}
+}
+
+// colorizeDaemonLogLine colorizes slog-formatted daemon log lines.
+// Format: time=... level=INFO msg="..." key=val ...
+func colorizeDaemonLogLine(line string) string {
+	if line == "" {
+		return line
+	}
+	// Dim the timestamp (time=2026-02-05T...)
+	if strings.HasPrefix(line, "time=") {
+		if idx := strings.Index(line, " level="); idx > 0 {
+			rest := line[idx+1:]
+			// Color level
+			rest = strings.Replace(rest, "level=ERROR", display.Red("level=ERROR"), 1)
+			rest = strings.Replace(rest, "level=WARN", display.Yellow("level=WARN"), 1)
+			return display.Dim(line[:idx]) + " " + rest
 		}
 	}
 	return line

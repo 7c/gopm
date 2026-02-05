@@ -55,3 +55,27 @@ func outputError(msg string) {
 	}
 	os.Exit(1)
 }
+
+// inferSingleProcess queries the daemon for the process list. If exactly one
+// process exists, its name is returned. Otherwise an error is printed and the
+// program exits.
+func inferSingleProcess(c *client.Client) string {
+	resp, err := c.Send(protocol.MethodList, nil)
+	if err != nil {
+		outputError(fmt.Sprintf("cannot list processes: %v", err))
+	}
+	if !resp.Success {
+		outputError(resp.Error)
+	}
+	var procs []protocol.ProcessInfo
+	if err := json.Unmarshal(resp.Data, &procs); err != nil {
+		outputError(fmt.Sprintf("cannot parse process list: %v", err))
+	}
+	if len(procs) == 0 {
+		outputError("no processes managed — specify a target")
+	}
+	if len(procs) > 1 {
+		outputError("multiple processes managed — specify a target")
+	}
+	return procs[0].Name
+}

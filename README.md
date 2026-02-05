@@ -277,26 +277,33 @@ fi
 
 ### `gopm logs`
 
-View or follow log output for a process.
+View or follow log output for a process. If only one process is managed, the target can be omitted.
 
 ```
 Usage:
-  gopm logs <name|id> [flags]
+  gopm logs [name|id|all] [flags]
 
 Flags:
-  --lines int       Number of lines to show (default: 20)
-  --follow, -f      Follow log output in real time (like tail -f)
-  --err             Show stderr log only (default: stdout)
+  -n, --lines int   Number of lines to show (default: 20)
+  -f, --follow      Follow log output in real time (like tail -f)
+      --err         Show stderr log only (default: stdout)
+  -d, --daemon      Show daemon system log (daemon.log)
 ```
 
 **Examples:**
 
 ```bash
 gopm logs api                 # last 20 lines of stdout
-gopm logs api --lines 100     # last 100 lines
+gopm logs api -n 100          # last 100 lines
 gopm logs api -f              # follow live
-gopm logs api --err           # stderr only
+gopm logs api --err           # stderr only (includes [gopm] action lines)
+gopm logs all                 # all processes
+gopm logs                     # auto-selects when single process
+gopm logs -d                  # daemon system log (starts, stops, errors)
+gopm logs -d -f               # follow daemon log live
 ```
+
+Process stderr logs contain `[gopm]`-prefixed action lines showing restarts, exits, and errors. The daemon log (`-d`) shows a unified view of all daemon-level events.
 
 ### `gopm flush`
 
@@ -403,6 +410,54 @@ Usage:
 ```
 
 All child processes receive SIGTERM → wait `kill-timeout` → SIGKILL. Daemon exits after all children are terminated.
+
+### `gopm reboot`
+
+Restart the daemon while preserving all managed processes. The daemon saves state, stops processes, and exits. With systemd installed, the service restarts automatically in ~5 seconds. Without systemd, the CLI restarts the daemon directly.
+
+```
+Usage:
+  gopm reboot
+```
+
+### `gopm newconfig`
+
+Print a complete `gopm.config.json` with all available options and their defaults. Redirect to a file to bootstrap your config.
+
+```
+Usage:
+  gopm newconfig
+```
+
+**Examples:**
+
+```bash
+gopm newconfig                                # print to stdout
+gopm newconfig > ~/.gopm/gopm.config.json     # bootstrap config
+```
+
+### `gopm suspend`
+
+Save state, stop the daemon, and disable the systemd service so it doesn't restart. Use when you need to take gopm completely offline (maintenance, upgrades, etc.).
+
+```
+Usage:
+  gopm suspend
+```
+
+Requires systemd installation (`gopm install`). After suspending:
+- All processes are stopped
+- The service won't restart on boot or crash
+- Process list is preserved in `dump.json`
+
+### `gopm unsuspend`
+
+Re-enable the systemd service and start the daemon. Automatically resurrects all processes that were online when suspended.
+
+```
+Usage:
+  gopm unsuspend
+```
 
 ### `gopm gui`
 
@@ -730,7 +785,7 @@ sudo gopm install --user deploy
 This creates a systemd service that:
 - Starts on boot
 - Calls `gopm resurrect` to restore your saved processes
-- Restarts the daemon if it crashes
+- Always restarts the daemon (5-second delay) — used by `gopm reboot`
 - Sets `LimitNOFILE=65536` for high file descriptor limits
 
 ### Typical workflow
@@ -785,28 +840,33 @@ GoPM uses an optional JSON config file (`gopm.config.json`) for daemon settings.
     "max_size": "5M",
     "max_files": 5
   },
-  "mcp_server": {
-    "bind": ["127.0.0.1:9512"],
+  "mcpserver": {
+    "device": ["127.0.0.1"],
+    "port": 9512,
     "uri": "/mcp"
   },
   "telemetry": {
     "telegraf": {
-      "addr": "127.0.0.1:8094",
+      "udp": "127.0.0.1:8094",
       "measurement": "gopm"
     }
   }
 }
 ```
 
+Generate a complete config with all defaults: `gopm newconfig > ~/.gopm/gopm.config.json`
+
+The `mcpserver.device` list accepts IP addresses, interface names (e.g. `"tailscale0"`), or `"localhost"`. An empty list binds to all interfaces (`0.0.0.0`).
+
 ### Three-state config
 
 Each section supports three states:
-- **Absent** — use defaults
+- **Absent** — use defaults (MCP enabled on `0.0.0.0:18999`)
 - **`null`** — explicitly disabled
 - **`{...}`** — configured with custom values
 
 ```json
-{ "mcp_server": null }
+{ "mcpserver": null }
 ```
 
 This disables the MCP HTTP server even if it would otherwise use defaults.
@@ -823,12 +883,15 @@ The MCP server uses the Streamable HTTP transport: `POST /mcp` for JSON-RPC 2.0 
 
 ```json
 {
-  "mcp_server": {
-    "bind": ["127.0.0.1:9512"],
+  "mcpserver": {
+    "device": ["127.0.0.1"],
+    "port": 9512,
     "uri": "/mcp"
   }
 }
 ```
+
+When no config file exists, MCP is enabled by default on `0.0.0.0:18999`. Set `"mcpserver": null` to disable.
 
 ### Exposed tools
 
@@ -883,7 +946,7 @@ GoPM can optionally export per-process and daemon-level metrics to Telegraf via 
 {
   "telemetry": {
     "telegraf": {
-      "addr": "127.0.0.1:8094",
+      "udp": "127.0.0.1:8094",
       "measurement": "gopm"
     }
   }
@@ -1058,6 +1121,9 @@ gopm/
 │   │   ├── ping.go        # Daemon health check
 │   │   ├── kill.go        # Kill daemon
 │   │   ├── config.go      # Show resolved configuration
+│   │   ├── newconfig.go   # Print sample config with defaults
+│   │   ├── reboot.go      # Daemon reboot (save + exit + restart)
+│   │   ├── suspend.go     # Suspend/unsuspend systemd service
 │   │   ├── pid.go         # Deep /proc process inspection (Linux)
 │   │   └── pid_stub.go    # Stub for non-Linux platforms
 │   ├── gui/               # Terminal UI (Bubble Tea)
@@ -1148,7 +1214,7 @@ gopm/
 | Max disk/process | `~8 MB` | (1+3 files) × 2 streams |
 | Metrics interval | `2s` | CPU/memory sampling |
 | Socket path | `~/.gopm/gopm.sock` | IPC endpoint |
-| MCP HTTP server | disabled | Enable via config |
+| MCP HTTP server | enabled on `0.0.0.0:18999` | Disable via `"mcpserver": null` |
 | Telegraf telemetry | disabled | Enable via config |
 | Config search | `~/.gopm/` → `/etc/` | Config file locations |
 

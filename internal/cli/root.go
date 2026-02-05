@@ -98,6 +98,9 @@ func Execute() {
 	rootCmd.AddCommand(rebootCmd)
 	rootCmd.AddCommand(guiCmd)
 	rootCmd.AddCommand(configShowCmd)
+	rootCmd.AddCommand(newconfigCmd)
+	rootCmd.AddCommand(suspendCmd)
+	rootCmd.AddCommand(unsuspendCmd)
 	rootCmd.AddCommand(pidCmd)
 
 	if err := rootCmd.Execute(); err != nil {

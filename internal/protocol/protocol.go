@@ -39,6 +39,7 @@ const (
 	MethodResurrect = "resurrect"
 	MethodPing      = "ping"
 	MethodKill      = "kill"
+	MethodReboot    = "reboot"
 )
 
 // Request is the IPC message from CLI to daemon.

@@ -298,6 +298,8 @@ func (d *Daemon) handleRequest(req protocol.Request) protocol.Response {
 		return d.handleResurrect()
 	case protocol.MethodKill:
 		return d.handleKill()
+	case protocol.MethodReboot:
+		return d.handleReboot()
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", req.Method))
 	}
@@ -619,6 +621,71 @@ func (d *Daemon) handleKill() protocol.Response {
 		d.shutdown()
 	}()
 	return successResponse(map[string]string{"status": "daemon stopping"})
+}
+
+func (d *Daemon) handleReboot() protocol.Response {
+	// Save state while processes are still online so dump.json records them
+	// as "online". Then stop everything and exit — systemd (or the CLI)
+	// will restart the daemon which auto-resurrects from the saved dump.
+	if err := d.SaveState(); err != nil {
+		return errorResponse(fmt.Sprintf("save failed: %v", err))
+	}
+
+	d.mu.RLock()
+	count := len(d.processes)
+	d.mu.RUnlock()
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		d.rebootShutdown()
+	}()
+	return successResponse(map[string]interface{}{
+		"status": "rebooting",
+		"saved":  count,
+	})
+}
+
+// rebootShutdown stops everything and exits WITHOUT re-saving state.
+// The caller must have already saved state with online processes.
+func (d *Daemon) rebootShutdown() {
+	slog.Info("daemon rebooting (save-and-exit)")
+
+	// Stop MCP HTTP server
+	if d.mcpServer != nil {
+		d.mcpServer.Shutdown()
+	}
+
+	// Stop telegraf
+	if d.telegraf != nil {
+		d.telegraf.Close()
+	}
+
+	// Stop accepting connections
+	d.listener.Close()
+	close(d.stopCh)
+
+	// Stop all processes in parallel
+	d.mu.RLock()
+	var wg sync.WaitGroup
+	for _, p := range d.processes {
+		wg.Add(1)
+		go func(proc *Process) {
+			defer wg.Done()
+			proc.Stop()
+			proc.CloseLogWriters()
+		}(p)
+	}
+	d.mu.RUnlock()
+	wg.Wait()
+
+	// Do NOT save state again — dump.json already has online statuses.
+
+	// Cleanup
+	os.Remove(protocol.SocketPath())
+	os.Remove(protocol.PIDFilePath())
+
+	slog.Info("daemon stopped for reboot")
+	os.Exit(0)
 }
 
 func (d *Daemon) shutdown() {
