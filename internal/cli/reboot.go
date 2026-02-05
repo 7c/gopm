@@ -3,8 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/7c/gopm/internal/client"
@@ -49,6 +51,9 @@ func runReboot(cmd *cobra.Command, args []string) {
 		outputError(fmt.Sprintf("failed to read dump file: %v", err))
 	}
 
+	// Read daemon PID so we can wait for the process to truly exit.
+	daemonPID := readDaemonPID()
+
 	// Step 2: Kill daemon
 	fmt.Printf("[2/3] %s daemon...\n", display.Dim("Stopping"))
 	c2, err := client.New()
@@ -58,19 +63,13 @@ func runReboot(cmd *cobra.Command, args []string) {
 	c2.Send(protocol.MethodKill, nil)
 	c2.Close()
 
-	// Wait for daemon to actually die (poll socket)
-	sockPath := protocol.SocketPath()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
-		if err != nil {
-			break // daemon is gone
-		}
-		conn.Close()
-		time.Sleep(200 * time.Millisecond)
-	}
+	// Wait for the daemon PROCESS to actually exit (not just socket close).
+	// The daemon closes the listener first, then stops processes, saves state,
+	// removes files, and finally exits. We must wait for the full exit.
+	waitForProcessExit(daemonPID, 15*time.Second)
 
-	// Restore the good dump.json (with online statuses)
+	// Restore the good dump.json (with online statuses).
+	// Safe now because the daemon has fully exited.
 	os.WriteFile(dumpPath, savedDump, 0644)
 
 	// Step 3: Start fresh daemon (auto-loads dump.json)
@@ -99,4 +98,33 @@ func runReboot(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("%s daemon rebooted (PID: %s)\n",
 		display.Bold("gopm"), display.Cyan(fmt.Sprintf("%d", ping.PID)))
+}
+
+// readDaemonPID reads the daemon PID from the PID file.
+func readDaemonPID() int {
+	data, err := os.ReadFile(protocol.PIDFilePath())
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
+// waitForProcessExit polls until a process no longer exists.
+func waitForProcessExit(pid int, timeout time.Duration) {
+	if pid == 0 {
+		time.Sleep(1 * time.Second)
+		return
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		err := syscall.Kill(pid, 0)
+		if err != nil {
+			return // process is gone
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

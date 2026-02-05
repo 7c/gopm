@@ -359,7 +359,7 @@ func TestAutoLoadDumpOnDaemonStart(t *testing.T) {
 	}
 }
 
-func TestExternalKillTriggersRestart(t *testing.T) {
+func TestExtKillRestart(t *testing.T) {
 	env := NewTestEnv(t)
 
 	// Start a process with autorestart=always
