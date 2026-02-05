@@ -5,7 +5,8 @@ GOPM_BIN = test/bin/gopm
 TESTAPP_BIN = test/bin/testapp
 
 build:
-	CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$(VERSION)" -o gopm ./cmd/gopm/
+	@mkdir -p bin
+	CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$(VERSION)" -o bin/gopm ./cmd/gopm/
 
 test-build:
 	@mkdir -p test/bin
@@ -30,5 +31,5 @@ test-race: test-build
 	go test -race ./... -timeout 600s
 
 clean:
+	rm -rf bin/
 	rm -rf test/bin/
-	rm -f gopm

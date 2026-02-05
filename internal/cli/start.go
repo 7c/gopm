@@ -16,7 +16,35 @@ import (
 var startCmd = &cobra.Command{
 	Use:   "start <script|binary|config.json> [flags] [-- args...]",
 	Short: "Start a process or load an ecosystem config",
-	Args:  cobra.MinimumNArgs(1),
+	Long: `Start a process, a script via an interpreter, or all apps from an ecosystem JSON file.
+
+The first argument is a command/binary path, a script path (with --interpreter),
+or a .json ecosystem config file. Everything after "--" is passed as arguments
+to the child process.`,
+	Example: `  # Start a Node.js application
+  gopm start app.js --interpreter node --name my-api
+  gopm start node --name my-api -- server.js --port 3000
+  gopm start node --name my-api --cwd /srv/app --env NODE_ENV=production -- index.js
+
+  # Start a Go binary
+  gopm start ./myserver --name backend -- --listen :8080
+  gopm start /usr/local/bin/myserver --name backend --autorestart on-failure
+
+  # Start a bash script
+  gopm start script.sh --interpreter bash --name worker
+  gopm start bash --name cron-job -- -c "while true; do ./sync.sh; sleep 60; done"
+
+  # Start with restart policies
+  gopm start ./worker --name worker --autorestart always --max-restarts 10
+  gopm start ./task --name task --autorestart on-failure --restart-delay 5s --exp-backoff
+  gopm start ./job --name job --autorestart never
+
+  # Start with custom log settings
+  gopm start ./app --name app --log-out /var/log/app.log --max-log-size 50M
+
+  # Start all apps from an ecosystem config
+  gopm start ecosystem.json`,
+	Args: cobra.MinimumNArgs(1),
 	// TraverseChildren allows flags after positional args and before "--".
 	TraverseChildren: true,
 	Run:              runStart,
