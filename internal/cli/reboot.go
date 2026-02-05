@@ -28,7 +28,7 @@ a fresh daemon, and resurrects all previously running processes.`,
 
 func runReboot(cmd *cobra.Command, args []string) {
 	// Step 1: Save current state
-	c, err := client.New()
+	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}
@@ -56,7 +56,7 @@ func runReboot(cmd *cobra.Command, args []string) {
 
 	// Step 2: Kill daemon
 	fmt.Printf("[2/3] %s daemon...\n", display.Dim("Stopping"))
-	c2, err := client.New()
+	c2, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}
@@ -74,7 +74,7 @@ func runReboot(cmd *cobra.Command, args []string) {
 
 	// Step 3: Start fresh daemon (auto-loads dump.json)
 	fmt.Printf("[3/3] %s daemon and restoring processes...\n", display.Dim("Starting"))
-	c3, err := client.New()
+	c3, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		outputError(fmt.Sprintf("failed to start new daemon: %v", err))
 	}

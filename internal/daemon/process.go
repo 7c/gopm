@@ -177,6 +177,7 @@ func (p *Process) Start() error {
 	p.stopping = false
 	p.info.PID = cmd.Process.Pid
 	p.info.Status = protocol.StatusOnline
+	p.info.StatusReason = ""
 	p.info.Uptime = time.Now()
 	p.lastSample = time.Now()
 	p.lastTicks = 0
@@ -240,6 +241,26 @@ func (p *Process) MarkExited(exitCode int, status protocol.Status) {
 	p.info.CPU = 0
 	p.info.Memory = 0
 	p.info.Status = status
+}
+
+// SetReason sets the status reason (why a process stopped/errored).
+func (p *Process) SetReason(reason string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.info.StatusReason = reason
+}
+
+// LogAction writes a daemon action message to the process's stderr log.
+// Messages are prefixed with [gopm] and get a timestamp from TimestampWriter.
+func (p *Process) LogAction(format string, args ...interface{}) {
+	p.mu.Lock()
+	w := p.stderr
+	p.mu.Unlock()
+	if w == nil {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	w.Write([]byte("[gopm] " + msg + "\n"))
 }
 
 // CloseLogWriters closes the log writers.

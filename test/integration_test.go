@@ -396,6 +396,46 @@ func TestExtKillRestart(t *testing.T) {
 	}
 }
 
+func TestRebootQuickExit(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Start a process that exits immediately with code 0
+	env.MustGopm("start", env.TestappBin, "--name", "quickexit",
+		"--max-restarts", "3",
+		"--restart-delay", "200ms",
+		"--", "--exit-after", "100ms")
+
+	// Wait for process to hit max restarts and become errored
+	time.Sleep(5 * time.Second)
+
+	status := env.GetProcessField("quickexit", "status")
+	if status != "errored" && status != "stopped" {
+		t.Logf("status after restarts: %s", status)
+	}
+
+	// The process should still appear in the list even when errored
+	count := env.ProcessCount()
+	if count != 1 {
+		t.Errorf("expected 1 process (even if errored), got %d", count)
+	}
+
+	// Now test reboot with a stable process
+	env.MustGopm("delete", "quickexit")
+
+	env.MustGopm("start", env.TestappBin, "--name", "stable", "--", "--run-forever")
+	env.WaitForStatus("stable", "online", 5*time.Second)
+	env.MustGopm("save")
+
+	// Reboot
+	env.MustGopm("reboot")
+	time.Sleep(2 * time.Second)
+
+	env.WaitForStatus("stable", "online", 15*time.Second)
+	if env.ProcessCount() != 1 {
+		t.Errorf("expected 1 process after reboot, got %d", env.ProcessCount())
+	}
+}
+
 func TestReboot(t *testing.T) {
 	env := NewTestEnv(t)
 

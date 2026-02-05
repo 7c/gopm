@@ -9,6 +9,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// configFlag is the global --config flag for specifying a config file.
+var configFlag string
+
 // Version is set at build time via ldflags.
 var Version = "dev"
 
@@ -55,15 +58,24 @@ var coloredHelpTemplate = `{{with .Long}}{{. | trimTrailingWhitespaces}}
 // Execute sets up the root command, registers all subcommands, and runs cobra.
 func Execute() {
 	// Check for --daemon flag before cobra parses anything.
-	for _, arg := range os.Args[1:] {
+	isDaemon := false
+	daemonConfigFlag := ""
+	for i, arg := range os.Args[1:] {
 		if arg == "--daemon" {
-			daemon.Run(Version)
-			return // never reached; daemon.Run calls os.Exit
+			isDaemon = true
 		}
+		if arg == "--config" && i+1 < len(os.Args[1:]) {
+			daemonConfigFlag = os.Args[i+2]
+		}
+	}
+	if isDaemon {
+		daemon.Run(Version, daemonConfigFlag)
+		return // never reached; daemon.Run calls os.Exit
 	}
 
 	rootCmd.Version = Version
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
+	rootCmd.PersistentFlags().StringVar(&configFlag, "config", "", "path to gopm.config.json")
 
 	// Apply colored help template globally.
 	rootCmd.SetHelpTemplate(coloredHelpTemplate)
@@ -85,7 +97,8 @@ func Execute() {
 	rootCmd.AddCommand(killCmd)
 	rootCmd.AddCommand(rebootCmd)
 	rootCmd.AddCommand(guiCmd)
-	rootCmd.AddCommand(mcpCmd)
+	rootCmd.AddCommand(configShowCmd)
+	rootCmd.AddCommand(pidCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

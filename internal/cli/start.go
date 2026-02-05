@@ -109,7 +109,7 @@ func startEcosystem(path string) {
 		exitError(fmt.Sprintf("failed to load ecosystem config: %v", err))
 	}
 
-	c, err := client.New()
+	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		exitError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}
@@ -187,7 +187,7 @@ func startSingle(command string, childArgs []string) {
 		params.Env = envMap
 	}
 
-	c, err := client.New()
+	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		exitError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

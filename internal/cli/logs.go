@@ -58,7 +58,7 @@ func init() {
 }
 
 func runLogs(cmd *cobra.Command, args []string) {
-	c, err := client.New()
+	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

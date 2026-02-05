@@ -109,6 +109,7 @@ type ProcessInfo struct {
 	Env           map[string]string `json:"env"`
 	Interpreter   string            `json:"interpreter,omitempty"`
 	Status        Status            `json:"status"`
+	StatusReason  string            `json:"status_reason,omitempty"`
 	PID           int               `json:"pid"`
 	RestartPolicy RestartPolicy     `json:"restart_policy"`
 	Restarts      int               `json:"restarts"`
@@ -160,6 +161,8 @@ type PingResult struct {
 	Uptime        string `json:"uptime"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	Version       string `json:"version"`
+	ConfigFile    string `json:"config_file,omitempty"`
+	ConfigSource  string `json:"config_source,omitempty"`
 }
 
 // IsRunningResult is returned by the "isrunning" method.

@@ -21,7 +21,7 @@ var restartCmd = &cobra.Command{
 func runRestart(cmd *cobra.Command, args []string) {
 	target := args[0]
 
-	c, err := client.New()
+	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		exitError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

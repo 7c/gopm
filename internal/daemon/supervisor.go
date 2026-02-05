@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -21,10 +22,13 @@ func (d *Daemon) monitor(p *Process) {
 
 	if wasStopping {
 		p.MarkExited(exitCode, protocol.StatusStopped)
+		p.SetReason("stopped by user")
+		p.LogAction("process stopped (exit code %d)", exitCode)
 		slog.Info("process stopped", "name", p.info.Name, "exit_code", exitCode)
 		return
 	}
 
+	p.LogAction("process exited with code %d", exitCode)
 	slog.Info("process exited", "name", p.info.Name, "exit_code", exitCode)
 	d.handleProcessExit(p, exitCode)
 }
@@ -39,27 +43,39 @@ func (d *Daemon) handleProcessExit(p *Process, exitCode int) {
 
 	// Check restart policy
 	if policy.AutoRestart == protocol.RestartNever {
+		reason := "autorestart disabled"
 		p.MarkExited(exitCode, protocol.StatusStopped)
+		p.SetReason(reason)
+		p.LogAction("%s, not restarting", reason)
 		slog.Info("autorestart=never, marking stopped", "name", p.info.Name)
 		return
 	}
 
 	if policy.AutoRestart == protocol.RestartOnFailure && exitCode == 0 {
+		reason := "clean exit (autorestart=on-failure)"
 		p.MarkExited(exitCode, protocol.StatusStopped)
+		p.SetReason(reason)
+		p.LogAction("%s, not restarting", reason)
 		slog.Info("clean exit with autorestart=on-failure, marking stopped", "name", p.info.Name)
 		return
 	}
 
 	// Check exit code filters
 	if len(policy.NoRestartOnExit) > 0 && containsInt(policy.NoRestartOnExit, exitCode) {
+		reason := fmt.Sprintf("exit code %d excluded from restart", exitCode)
 		p.MarkExited(exitCode, protocol.StatusStopped)
+		p.SetReason(reason)
+		p.LogAction("%s", reason)
 		slog.Info("exit code in no_restart_on_exit, marking stopped",
 			"name", p.info.Name, "exit_code", exitCode)
 		return
 	}
 
 	if len(policy.RestartOnExit) > 0 && !containsInt(policy.RestartOnExit, exitCode) {
+		reason := fmt.Sprintf("exit code %d not in restart list", exitCode)
 		p.MarkExited(exitCode, protocol.StatusErrored)
+		p.SetReason(reason)
+		p.LogAction("%s", reason)
 		slog.Info("exit code not in restart_on_exit, marking errored",
 			"name", p.info.Name, "exit_code", exitCode)
 		return
@@ -78,7 +94,10 @@ func (d *Daemon) handleProcessExit(p *Process, exitCode int) {
 
 	// Check max restarts
 	if policy.MaxRestarts > 0 && restarts >= policy.MaxRestarts {
+		reason := fmt.Sprintf("max restarts reached (exit code %d)", exitCode)
 		p.MarkExited(exitCode, protocol.StatusErrored)
+		p.SetReason(reason)
+		p.LogAction("%s — giving up after %d restarts", reason, restarts)
 		slog.Info("max restarts reached, marking errored",
 			"name", p.info.Name, "restarts", restarts, "max", policy.MaxRestarts)
 		return
@@ -93,6 +112,11 @@ func (d *Daemon) handleProcessExit(p *Process, exitCode int) {
 		}
 	}
 
+	maxLabel := "unlimited"
+	if policy.MaxRestarts > 0 {
+		maxLabel = fmt.Sprintf("%d", policy.MaxRestarts)
+	}
+	p.LogAction("restarting (attempt %d/%s, delay %s)", restarts+1, maxLabel, delay)
 	slog.Info("restarting process",
 		"name", p.info.Name, "delay", delay, "restart_count", restarts+1)
 
@@ -108,10 +132,14 @@ func (d *Daemon) handleProcessExit(p *Process, exitCode int) {
 
 	p.CloseLogWriters()
 	if err := p.Start(); err != nil {
+		reason := fmt.Sprintf("failed to restart: %s", err)
 		p.MarkExited(exitCode, protocol.StatusErrored)
+		p.SetReason(reason)
 		slog.Error("failed to restart process", "name", p.info.Name, "error", err)
 		return
 	}
+
+	p.LogAction("process started (PID %d)", p.info.PID)
 
 	// Monitor the new process instance
 	go d.monitor(p)

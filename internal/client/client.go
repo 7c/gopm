@@ -18,14 +18,20 @@ import (
 
 // Client communicates with the gopm daemon over a Unix socket.
 type Client struct {
-	conn net.Conn
-	home string
+	conn       net.Conn
+	home       string
+	configFlag string
 }
 
 // New creates a new Client, auto-starting the daemon if necessary.
 func New() (*Client, error) {
+	return NewWithConfig("")
+}
+
+// NewWithConfig creates a Client that passes the given config flag to the daemon.
+func NewWithConfig(configFlag string) (*Client, error) {
 	home := protocol.GopmHome()
-	c := &Client{home: home}
+	c := &Client{home: home, configFlag: configFlag}
 
 	if err := c.ensureDaemon(); err != nil {
 		return nil, err
@@ -75,6 +81,18 @@ func (c *Client) Send(method string, params interface{}) (*protocol.Response, er
 	}
 
 	return &resp, nil
+}
+
+// TryConnect attempts to connect to a running daemon without auto-starting one.
+// Returns nil, err if the daemon is not running.
+func TryConnect(configFlag string) (*Client, error) {
+	home := protocol.GopmHome()
+	c := &Client{home: home, configFlag: configFlag}
+	sockPath := filepath.Join(home, "gopm.sock")
+	if err := c.tryConnect(sockPath); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // Close closes the connection to the daemon.
@@ -160,7 +178,11 @@ func (c *Client) startDaemon() error {
 	}
 	self, _ = filepath.EvalSymlinks(self)
 
-	cmd := exec.Command(self, "--daemon")
+	args := []string{"--daemon"}
+	if c.configFlag != "" {
+		args = append(args, "--config", c.configFlag)
+	}
+	cmd := exec.Command(self, args...)
 	cmd.Env = os.Environ()
 	// Ensure GOPM_HOME is passed
 	found := false

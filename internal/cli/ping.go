@@ -16,7 +16,7 @@ var pingCmd = &cobra.Command{
 	Short: "Check if daemon is running",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		c, err := client.New()
+		c, err := client.NewWithConfig(configFlag)
 		if err != nil {
 			if jsonOutput {
 				outputError("gopm daemon is not running")

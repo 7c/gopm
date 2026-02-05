@@ -132,6 +132,10 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 		}
 		rawStatus := string(p.Status)
 		colorStatus := StatusColor(rawStatus)
+		if p.StatusReason != "" && p.Status == protocol.StatusErrored {
+			rawStatus += " (" + p.StatusReason + ")"
+			colorStatus += Dim(" ("+p.StatusReason+")")
+		}
 
 		raw := []string{
 			fmt.Sprintf("%d", p.ID),
@@ -171,6 +175,9 @@ func RenderDescribe(w io.Writer, p protocol.ProcessInfo) {
 	addKVc("Name", p.Name, Bold(p.Name))
 	addKV("ID", fmt.Sprintf("%d", p.ID))
 	addKVc("Status", string(p.Status), StatusColor(string(p.Status)))
+	if p.StatusReason != "" {
+		addKVc("Status Reason", p.StatusReason, Yellow(p.StatusReason))
+	}
 	if p.Status == protocol.StatusOnline && p.PID > 0 {
 		addKV("PID", fmt.Sprintf("%d", p.PID))
 	} else {

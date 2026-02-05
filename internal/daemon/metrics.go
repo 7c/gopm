@@ -69,6 +69,17 @@ func (d *Daemon) sampleMetrics() {
 				p.mu.Unlock()
 			}
 
+			// Emit telegraf metrics
+			if d.telegraf != nil {
+				d.mu.RLock()
+				var infos []protocol.ProcessInfo
+				for _, proc := range d.processes {
+					infos = append(infos, proc.Info())
+				}
+				d.mu.RUnlock()
+				d.telegraf.Emit(infos, time.Since(d.startTime))
+			}
+
 		case <-d.stopCh:
 			return
 		}

@@ -52,7 +52,8 @@ func LoadState() ([]protocol.ProcessInfo, error) {
 	return infos, nil
 }
 
-// ResurrectProcesses starts all previously-online processes from dump.json.
+// ResurrectProcesses restores all processes from dump.json.
+// Online processes are started; stopped/errored are registered without starting.
 func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 	infos, err := LoadState()
 	if err != nil {
@@ -61,49 +62,76 @@ func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 
 	var resurrected []protocol.ProcessInfo
 	for _, info := range infos {
-		if info.Status != protocol.StatusOnline {
-			continue
-		}
+		if info.Status == protocol.StatusOnline {
+			params := infoToStartParams(info)
+			proc, err := d.startProcess(params)
+			if err != nil {
+				slog.Error("failed to resurrect process", "name", info.Name, "error", err)
+				continue
+			}
+			resurrected = append(resurrected, proc.Info())
+		} else {
+			// Register stopped/errored process without starting it
+			d.mu.Lock()
+			if _, exists := d.processes[info.Name]; exists {
+				d.mu.Unlock()
+				continue
+			}
+			id := d.nextID
+			d.nextID++
+			d.mu.Unlock()
 
-		params := protocol.StartParams{
-			Command:     info.Command,
-			Name:        info.Name,
-			Args:        info.Args,
-			Cwd:         info.Cwd,
-			Env:         info.Env,
-			Interpreter: info.Interpreter,
-			AutoRestart: string(info.RestartPolicy.AutoRestart),
-			LogOut:      info.LogOut,
-			LogErr:      info.LogErr,
-		}
+			proc := &Process{
+				info: info,
+			}
+			proc.info.ID = id
+			proc.info.PID = 0
 
-		maxRestarts := info.RestartPolicy.MaxRestarts
-		params.MaxRestarts = &maxRestarts
+			d.mu.Lock()
+			d.processes[info.Name] = proc
+			d.mu.Unlock()
 
-		if info.RestartPolicy.MinUptime.Duration > 0 {
-			params.MinUptime = info.RestartPolicy.MinUptime.String()
+			slog.Info("registered saved process", "name", info.Name, "status", info.Status)
+			resurrected = append(resurrected, proc.Info())
 		}
-		if info.RestartPolicy.RestartDelay.Duration > 0 {
-			params.RestartDelay = info.RestartPolicy.RestartDelay.String()
-		}
-		params.ExpBackoff = info.RestartPolicy.ExpBackoff
-		if info.RestartPolicy.MaxDelay.Duration > 0 {
-			params.MaxDelay = info.RestartPolicy.MaxDelay.String()
-		}
-		if info.RestartPolicy.KillTimeout.Duration > 0 {
-			params.KillTimeout = info.RestartPolicy.KillTimeout.String()
-		}
-		if info.MaxLogSize > 0 {
-			params.MaxLogSize = fmt.Sprintf("%d", info.MaxLogSize)
-		}
-
-		proc, err := d.startProcess(params)
-		if err != nil {
-			slog.Error("failed to resurrect process", "name", info.Name, "error", err)
-			continue
-		}
-		resurrected = append(resurrected, proc.Info())
 	}
 
 	return resurrected, nil
+}
+
+// infoToStartParams converts a ProcessInfo to StartParams for resurrection.
+func infoToStartParams(info protocol.ProcessInfo) protocol.StartParams {
+	params := protocol.StartParams{
+		Command:     info.Command,
+		Name:        info.Name,
+		Args:        info.Args,
+		Cwd:         info.Cwd,
+		Env:         info.Env,
+		Interpreter: info.Interpreter,
+		AutoRestart: string(info.RestartPolicy.AutoRestart),
+		LogOut:      info.LogOut,
+		LogErr:      info.LogErr,
+	}
+
+	maxRestarts := info.RestartPolicy.MaxRestarts
+	params.MaxRestarts = &maxRestarts
+
+	if info.RestartPolicy.MinUptime.Duration > 0 {
+		params.MinUptime = info.RestartPolicy.MinUptime.String()
+	}
+	if info.RestartPolicy.RestartDelay.Duration > 0 {
+		params.RestartDelay = info.RestartPolicy.RestartDelay.String()
+	}
+	params.ExpBackoff = info.RestartPolicy.ExpBackoff
+	if info.RestartPolicy.MaxDelay.Duration > 0 {
+		params.MaxDelay = info.RestartPolicy.MaxDelay.String()
+	}
+	if info.RestartPolicy.KillTimeout.Duration > 0 {
+		params.KillTimeout = info.RestartPolicy.KillTimeout.String()
+	}
+	if info.MaxLogSize > 0 {
+		params.MaxLogSize = fmt.Sprintf("%d", info.MaxLogSize)
+	}
+
+	return params
 }

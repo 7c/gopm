@@ -19,7 +19,7 @@ var flushCmd = &cobra.Command{
 func runFlush(cmd *cobra.Command, args []string) {
 	target := args[0]
 
-	c, err := client.New()
+	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

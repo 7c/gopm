@@ -15,7 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/7c/gopm/internal/config"
+	"github.com/7c/gopm/internal/mcphttp"
 	"github.com/7c/gopm/internal/protocol"
+	"github.com/7c/gopm/internal/telemetry"
 )
 
 // Version is set at build time.
@@ -30,14 +33,34 @@ type Daemon struct {
 	startTime time.Time
 	stopCh    chan struct{}
 	home      string
+
+	mcpServer    *mcphttp.Server
+	telegraf     *telemetry.TelegrafEmitter
+	resolved     *config.Resolved
+	configPath   string
+	configSource string
 }
 
 // Run starts the daemon. This is the main entry point for daemon mode.
-func Run(version string) {
+func Run(version string, configFlag string) {
 	Version = version
 	home := protocol.GopmHome()
 	os.MkdirAll(home, 0755)
-	os.MkdirAll(protocol.LogDir(), 0755)
+
+	// Load configuration
+	result, err := config.Load(home, configFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %s\n", err)
+		os.Exit(1)
+	}
+	resolved, warnings, err := config.Resolve(result.Config, home)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: gopm.config.json: %s\n", err)
+		os.Exit(1)
+	}
+
+	// Ensure log directory exists (may come from config)
+	os.MkdirAll(resolved.LogDir, 0755)
 
 	// Set up logging to a file
 	logPath := filepath.Join(home, "daemon.log")
@@ -46,7 +69,13 @@ func Run(version string) {
 		fmt.Fprintf(os.Stderr, "cannot open log file: %v\n", err)
 		os.Exit(1)
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
+	// Log config warnings
+	for _, w := range warnings {
+		slog.Warn(w)
+	}
 
 	// Write PID file
 	pidPath := protocol.PIDFilePath()
@@ -56,11 +85,17 @@ func Run(version string) {
 	}
 
 	d := &Daemon{
-		processes: make(map[string]*Process),
-		startTime: time.Now(),
-		stopCh:    make(chan struct{}),
-		home:      home,
+		processes:    make(map[string]*Process),
+		startTime:    time.Now(),
+		stopCh:       make(chan struct{}),
+		home:         home,
+		resolved:     resolved,
+		configPath:   result.Path,
+		configSource: result.Source,
 	}
+
+	// Print startup banner
+	d.printBanner(resolved, result.Path, result.Source)
 
 	// Start socket listener
 	sockPath := protocol.SocketPath()
@@ -82,6 +117,31 @@ func Run(version string) {
 		slog.Info("auto-resurrected processes on startup", "count", len(resurrected))
 	}
 
+	// Start MCP HTTP server if enabled
+	if resolved.MCPEnabled {
+		var bindAddrs []mcphttp.BindAddr
+		for _, ba := range resolved.MCPBindAddrs {
+			bindAddrs = append(bindAddrs, mcphttp.BindAddr{Addr: ba.Addr, Label: ba.Label})
+		}
+		srv := mcphttp.New(d, bindAddrs, resolved.MCPURI, logger)
+		if err := srv.Start(bindAddrs); err != nil {
+			slog.Error("MCP HTTP server failed to start", "error", err)
+		} else {
+			d.mcpServer = srv
+		}
+	}
+
+	// Start telegraf telemetry if enabled
+	if resolved.TelegrafEnabled && resolved.TelegrafAddr != nil {
+		em, err := telemetry.NewTelegrafEmitter(resolved.TelegrafAddr, resolved.TelegrafMeas)
+		if err != nil {
+			slog.Warn("telegraf emitter failed to start, continuing without telemetry", "error", err)
+		} else {
+			d.telegraf = em
+			slog.Info("telegraf telemetry started", "addr", resolved.TelegrafAddr.String())
+		}
+	}
+
 	// Handle signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -96,6 +156,79 @@ func Run(version string) {
 
 	// Accept connections
 	d.acceptLoop()
+}
+
+// printBanner logs the startup banner with resolved configuration.
+func (d *Daemon) printBanner(r *config.Resolved, configPath, configSource string) {
+	configLine := "(none found, using defaults)"
+	if configPath != "" {
+		configLine = fmt.Sprintf("%s (%s)", configPath, configSource)
+	}
+
+	mcpLine := "disabled"
+	if r.MCPEnabled {
+		var binds []string
+		for _, ba := range r.MCPBindAddrs {
+			binds = append(binds, fmt.Sprintf("%s (%s)", ba.Addr, ba.Label))
+		}
+		mcpLine = fmt.Sprintf("enabled on %s, URI: %s", strings.Join(binds, ", "), r.MCPURI)
+	}
+
+	telegrafLine := "disabled"
+	if r.TelegrafEnabled && r.TelegrafAddr != nil {
+		telegrafLine = fmt.Sprintf("enabled, UDP: %s, measurement: %s", r.TelegrafAddr.String(), r.TelegrafMeas)
+	}
+
+	slog.Info("GoPM starting",
+		"version", Version,
+		"pid", os.Getpid(),
+		"config", configLine,
+		"home", d.home,
+		"log_dir", r.LogDir,
+		"log_max_size", r.LogMaxSize,
+		"log_max_files", r.LogMaxFiles,
+		"mcp", mcpLine,
+		"telegraf", telegrafLine,
+	)
+}
+
+// HandleRequest is the exported entry point for internal callers (e.g. MCP HTTP).
+func (d *Daemon) HandleRequest(req protocol.Request) protocol.Response {
+	return d.handleRequest(req)
+}
+
+// ProcessCount returns counts of processes by status.
+func (d *Daemon) ProcessCount() (total, online, stopped, errored int) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, p := range d.processes {
+		info := p.Info()
+		total++
+		switch info.Status {
+		case protocol.StatusOnline:
+			online++
+		case protocol.StatusStopped:
+			stopped++
+		case protocol.StatusErrored:
+			errored++
+		}
+	}
+	return
+}
+
+// DaemonUptime returns how long the daemon has been running.
+func (d *Daemon) DaemonUptime() time.Duration {
+	return time.Since(d.startTime)
+}
+
+// DaemonPID returns the daemon's process ID.
+func (d *Daemon) DaemonPID() int {
+	return os.Getpid()
+}
+
+// DaemonVersion returns the daemon version string.
+func (d *Daemon) DaemonVersion() string {
+	return Version
 }
 
 func (d *Daemon) acceptLoop() {
@@ -176,6 +309,8 @@ func (d *Daemon) handlePing() protocol.Response {
 		Uptime:        protocol.FormatDuration(time.Since(d.startTime)),
 		UptimeSeconds: int64(time.Since(d.startTime).Seconds()),
 		Version:       Version,
+		ConfigFile:    d.configPath,
+		ConfigSource:  d.configSource,
 	}
 	return successResponse(result)
 }
@@ -223,6 +358,8 @@ func (d *Daemon) startProcess(params protocol.StartParams) (*Process, error) {
 	d.mu.Lock()
 	d.processes[proc.info.Name] = proc
 	d.mu.Unlock()
+
+	proc.LogAction("process started (PID %d)", proc.info.PID)
 
 	go d.monitor(proc)
 
@@ -486,6 +623,16 @@ func (d *Daemon) handleKill() protocol.Response {
 
 func (d *Daemon) shutdown() {
 	slog.Info("daemon shutting down")
+
+	// Stop MCP HTTP server
+	if d.mcpServer != nil {
+		d.mcpServer.Shutdown()
+	}
+
+	// Stop telegraf
+	if d.telegraf != nil {
+		d.telegraf.Close()
+	}
 
 	// Stop accepting connections
 	d.listener.Close()
