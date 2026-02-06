@@ -176,7 +176,7 @@ gopm delete all        # remove everything
 
 Display all managed processes with status, resource usage, and uptime.
 
-Aliases: `ls`, `status`
+Aliases: `ls`
 
 ```
 Usage:
@@ -189,15 +189,17 @@ Flags:
 **Output:**
 
 ```
-┌────┬──────────┬────────┬──────┬────────┬──────────┬─────────┬────────────┐
-│ ID │ Name     │ Status │ PID  │ CPU    │ Memory   │ Restart │ Uptime     │
-├────┼──────────┼────────┼──────┼────────┼──────────┼─────────┼────────────┤
-│ 0  │ api      │ online │ 4521 │ 0.3%   │ 24.1 MB  │ 0       │ 2h 15m     │
-│ 1  │ worker   │ online │ 4523 │ 12.1%  │ 128.5 MB │ 3       │ 45m        │
-│ 2  │ cron     │ stopped│ -    │ -      │ -        │ 0       │ -          │
-│ 3  │ proxy    │ errored│ -    │ -      │ -        │ 15      │ -          │
-└────┴──────────┴────────┴──────┴────────┴──────────┴─────────┴────────────┘
+┌────┬──────────┬────────┬──────┬────────┬──────────┬─────────┬────────┬────────────┐
+│ ID │ Name     │ Status │ PID  │ CPU    │ Memory   │ Restart │ Uptime │ Ports      │
+├────┼──────────┼────────┼──────┼────────┼──────────┼─────────┼────────┼────────────┤
+│ 0  │ api      │ online │ 4521 │ 0.3%   │ 24.1 MB  │ 0       │ 2h 15m │ 8080       │
+│ 1  │ worker   │ online │ 4523 │ 12.1%  │ 128.5 MB │ 3       │ 45m    │ -          │
+│ 2  │ cron     │ stopped│ -    │ -      │ -        │ 0       │ -      │ -          │
+│ 3  │ proxy    │ errored│ -    │ -      │ -        │ 15      │ -      │ -          │
+└────┴──────────┴────────┴──────┴────────┴──────────┴─────────┴────────┴────────────┘
 ```
+
+The **Ports** column shows listening TCP/UDP ports for each process. A background worker scans listeners every 60 seconds.
 
 ### `gopm describe`
 
@@ -413,27 +415,32 @@ All child processes receive SIGTERM → wait `kill-timeout` → SIGKILL. Daemon 
 
 ### `gopm reboot`
 
-Restart the daemon while preserving all managed processes. The daemon saves state, stops processes, and exits. With systemd installed, the service restarts automatically in ~5 seconds. Without systemd, the CLI restarts the daemon directly.
+Restart the daemon while preserving all managed processes. The daemon saves state, stops processes, and exits. With systemd installed, the service restarts automatically in ~5 seconds.
+
+Without systemd, the reboot will fail with an error (the daemon wouldn't come back). Use `--force` to reboot anyway — the CLI will restart the daemon directly.
 
 ```
 Usage:
-  gopm reboot
+  gopm reboot [flags]
+
+Flags:
+  -f, --force    Force reboot even without systemd installed
 ```
 
-### `gopm newconfig`
+### `gopm config`
 
 Print a complete `gopm.config.json` with all available options and their defaults. Redirect to a file to bootstrap your config.
 
 ```
 Usage:
-  gopm newconfig
+  gopm config
 ```
 
 **Examples:**
 
 ```bash
-gopm newconfig                                # print to stdout
-gopm newconfig > ~/.gopm/gopm.config.json     # bootstrap config
+gopm config                                # print to stdout
+gopm config > ~/.gopm/gopm.config.json     # bootstrap config
 ```
 
 ### `gopm suspend`
@@ -514,13 +521,13 @@ Flags:
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). The GUI is a pure client — it uses the same Unix socket IPC as the CLI.
 
-### `gopm config`
+### `gopm status`
 
-Show the resolved configuration, including what config file the running daemon loaded.
+Show the resolved configuration, daemon info (PID, uptime, version), and systemd install state.
 
 ```
 Usage:
-  gopm config [flags]
+  gopm status [flags]
 
 Flags:
   --validate    Validate config only
@@ -530,16 +537,17 @@ Flags:
 **Examples:**
 
 ```bash
-gopm config                    # show resolved config
-gopm config --validate         # check config for errors
-gopm config --json             # machine-readable output
+gopm status                    # show resolved config + daemon info
+gopm status --validate         # check config for errors
+gopm status --json             # machine-readable output
 ```
 
 **Output:**
 
 ```
-Config file:  /home/deploy/.gopm/gopm.config.json (gopm-home)
-Daemon using: /home/deploy/.gopm/gopm.config.json (gopm-home)
+Config file:  /home/deploy/.gopm/gopm.config.json (found)
+Daemon using: /home/deploy/.gopm/gopm.config.json (found)
+Daemon:       PID 1150, uptime 4d 12h, version 0.0.6
 
 Logs:
   Directory:    /home/deploy/.gopm/logs
@@ -553,6 +561,10 @@ MCP HTTP Server:
 
 Telemetry:
   Telegraf:     disabled
+
+Systemd:
+  Unit file:    /etc/systemd/system/gopm.service
+  Installed:    yes
 ```
 
 ### `gopm pid`
@@ -888,7 +900,7 @@ GoPM uses an optional JSON config file (`gopm.config.json`) for daemon settings.
 }
 ```
 
-Generate a complete config with all defaults: `gopm newconfig > ~/.gopm/gopm.config.json`
+Generate a complete config with all defaults: `gopm config > ~/.gopm/gopm.config.json`
 
 The `mcpserver.device` list accepts IP addresses, interface names (e.g. `"tailscale0"`), or `"localhost"`. An empty list binds to localhost (`127.0.0.1`) only.
 
@@ -1007,6 +1019,7 @@ CLI (gopm start, list, ...)
 Daemon (long-lived background process)
   ├── Process Supervisor (restart logic, signal handling)
   ├── Metrics Sampler (CPU/mem from /proc, every 2s)
+  ├── Listener Scanner (listening ports, every 60s)
   ├── Log Writers (rotating stdout/stderr capture)
   ├── State Manager (dump.json persistence)
   ├── MCP HTTP Server (optional, for AI tool integration)
@@ -1159,8 +1172,8 @@ gopm/
 │   │   ├── install.go     # Systemd service install/uninstall
 │   │   ├── ping.go        # Daemon health check
 │   │   ├── kill.go        # Kill daemon
-│   │   ├── config.go      # Show resolved configuration
-│   │   ├── newconfig.go   # Print sample config with defaults
+│   │   ├── config.go      # Show daemon status and resolved configuration
+│   │   ├── newconfig.go   # Print sample config with defaults (gopm config)
 │   │   ├── reboot.go      # Daemon reboot (save + exit + restart)
 │   │   ├── suspend.go     # Suspend/unsuspend systemd service
 │   │   ├── pid.go         # Deep /proc process inspection (Linux)
@@ -1183,6 +1196,7 @@ gopm/
 │   │   ├── process.go     # Process lifecycle
 │   │   ├── supervisor.go  # Restart logic, action logging
 │   │   ├── metrics.go     # CPU/mem sampling + telegraf emit
+│   │   ├── listeners.go   # Background listener port scanner
 │   │   └── state.go       # dump.json persistence, resurrect
 │   ├── client/            # CLI→daemon IPC client
 │   ├── protocol/          # JSON-RPC message types & helpers

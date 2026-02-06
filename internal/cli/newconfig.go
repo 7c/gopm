@@ -27,13 +27,13 @@ const defaultConfig = `{
   }
 }`
 
-var newconfigCmd = &cobra.Command{
-	Use:   "newconfig",
+var configCmd = &cobra.Command{
+	Use:   "config",
 	Short: "Print a sample gopm.config.json with all defaults",
 	Long: `Print a complete gopm.config.json showing every available option
 with its default value. Redirect to a file to bootstrap your config:
 
-  gopm newconfig > ~/.gopm/gopm.config.json
+  gopm config > ~/.gopm/gopm.config.json
 
 Then edit the file to your needs. Set a section to null to disable it:
 

@@ -12,11 +12,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var configValidate bool
+var statusValidate bool
 
-var configShowCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Show resolved configuration",
+var statusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show daemon status and resolved configuration",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		home := protocol.GopmHome()
@@ -29,7 +29,7 @@ var configShowCmd = &cobra.Command{
 			exitError(err.Error())
 		}
 
-		if configValidate {
+		if statusValidate {
 			for _, w := range warnings {
 				fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
 			}
@@ -145,7 +145,7 @@ var configShowCmd = &cobra.Command{
 }
 
 func init() {
-	configShowCmd.Flags().BoolVar(&configValidate, "validate", false, "validate config only")
+	statusCmd.Flags().BoolVar(&statusValidate, "validate", false, "validate config only")
 }
 
 // isSystemdInstalled checks if gopm is installed as a systemd service.

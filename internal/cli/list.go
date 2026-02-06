@@ -13,7 +13,7 @@ import (
 
 var listCmd = &cobra.Command{
 	Use:     "list",
-	Aliases: []string{"ls", "status"},
+	Aliases: []string{"ls"},
 	Short:   "List all processes",
 	Args:    cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {

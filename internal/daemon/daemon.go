@@ -154,6 +154,9 @@ func Run(version string, configFlag string) {
 	// Start metrics sampling
 	go d.sampleMetrics()
 
+	// Start listener scanning
+	go d.scanListeners()
+
 	// Accept connections
 	d.acceptLoop()
 }

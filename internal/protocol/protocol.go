@@ -119,6 +119,7 @@ type ProcessInfo struct {
 	ExitCode      int               `json:"exit_code"`
 	Memory        uint64            `json:"memory"`
 	CPU           float64           `json:"cpu"`
+	Listeners     []string          `json:"listeners"`
 	LogOut        string            `json:"log_out"`
 	LogErr        string            `json:"log_err"`
 	MaxLogSize    int64             `json:"max_log_size"`

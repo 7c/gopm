@@ -108,7 +108,7 @@ func (t *Table) coloredRow(w io.Writer, rawCols, colorCols []string) {
 
 // RenderProcessList renders the process list table with colored status.
 func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
-	tbl := NewTable("ID", "Name", "Status", "PID", "CPU", "Memory", "Restart", "Uptime")
+	tbl := NewTable("ID", "Name", "Status", "PID", "CPU", "Memory", "Restart", "Uptime", "Ports")
 	for _, p := range procs {
 		pid := Dim("-")
 		cpu := Dim("-")
@@ -118,6 +118,8 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 		rawCpu := "-"
 		rawMem := "-"
 		rawUptime := "-"
+		rawPorts := "-"
+		ports := Dim("-")
 		if p.Status == protocol.StatusOnline && p.PID > 0 {
 			rawPid = fmt.Sprintf("%d", p.PID)
 			rawCpu = fmt.Sprintf("%.1f%%", p.CPU)
@@ -128,6 +130,10 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 			if !p.Uptime.IsZero() {
 				rawUptime = protocol.FormatDuration(time.Since(p.Uptime))
 				uptime = rawUptime
+			}
+			if len(p.Listeners) > 0 {
+				rawPorts = formatPorts(p.Listeners)
+				ports = rawPorts
 			}
 		}
 		rawStatus := string(p.Status)
@@ -146,6 +152,7 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 			rawMem,
 			fmt.Sprintf("%d", p.Restarts),
 			rawUptime,
+			rawPorts,
 		}
 		colored := []string{
 			Dim(fmt.Sprintf("%d", p.ID)),
@@ -156,10 +163,34 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 			mem,
 			fmt.Sprintf("%d", p.Restarts),
 			uptime,
+			ports,
 		}
 		tbl.AddColoredRow(raw, colored)
 	}
 	tbl.Render(w)
+}
+
+// formatPorts extracts port numbers from listener addresses for compact display.
+func formatPorts(listeners []string) string {
+	var ports []string
+	seen := make(map[string]bool)
+	for _, l := range listeners {
+		// Format: "proto@addr:port"
+		idx := strings.LastIndex(l, ":")
+		if idx < 0 {
+			continue
+		}
+		port := l[idx+1:]
+		if port == "0" || seen[port] {
+			continue
+		}
+		seen[port] = true
+		ports = append(ports, port)
+	}
+	if len(ports) == 0 {
+		return "-"
+	}
+	return strings.Join(ports, ", ")
 }
 
 // RenderDescribe renders the describe output as a key-value table with colored status.

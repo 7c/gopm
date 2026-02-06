@@ -118,6 +118,9 @@ func (p *Process) Info() protocol.ProcessInfo {
 	if info.Env == nil {
 		info.Env = map[string]string{}
 	}
+	if info.Listeners == nil {
+		info.Listeners = []string{}
+	}
 	return info
 }
 

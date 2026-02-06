@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var rebootForce bool
+
 var rebootCmd = &cobra.Command{
 	Use:   "reboot",
 	Short: "Restart the daemon (save, stop, exit, resurrect)",
@@ -22,12 +24,23 @@ var rebootCmd = &cobra.Command{
 The daemon saves the current process list, stops all processes, and exits.
 If gopm is installed as a systemd service, systemd restarts the daemon
 automatically (within ~5 seconds). Otherwise the CLI restarts it directly.
-On startup the daemon resurrects all previously online processes.`,
+On startup the daemon resurrects all previously online processes.
+
+Without systemd installed the daemon will not restart automatically.
+Use --force to reboot anyway (the CLI will restart the daemon directly).`,
 	Args: cobra.NoArgs,
 	Run:  runReboot,
 }
 
+func init() {
+	rebootCmd.Flags().BoolVarP(&rebootForce, "force", "f", false, "force reboot even without systemd")
+}
+
 func runReboot(cmd *cobra.Command, args []string) {
+	if !isSystemdInstalled() && !rebootForce {
+		exitError("systemd service not installed — daemon will not restart automatically. Use --force to reboot anyway")
+	}
+
 	c, err := client.NewWithConfig(configFlag)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
