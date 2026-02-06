@@ -170,18 +170,16 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 	tbl.Render(w)
 }
 
-// extractListenerAddr strips the "proto@" prefix from a listener string,
-// returning just "ip:port".
-func extractListenerAddr(l string) string {
+// parseListener splits "proto@ip:port" into proto and addr.
+func parseListener(l string) (proto, addr string) {
 	if idx := strings.Index(l, "@"); idx >= 0 {
-		return l[idx+1:]
+		return l[:idx], l[idx+1:]
 	}
-	return l
+	return "", l
 }
 
 // isLocalAddr returns true if the address is a loopback/localhost bind.
 func isLocalAddr(addr string) bool {
-	// addr is "ip:port" — extract the IP part
 	host := addr
 	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
 		host = addr[:idx]
@@ -189,38 +187,37 @@ func isLocalAddr(addr string) bool {
 	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
-// formatListenerAddrs returns listener addresses as "ip:port, ip:port" (raw, no color).
+// formatListenerAddrs returns "proto@ip:port, ..." (raw, no color).
 func formatListenerAddrs(listeners []string) string {
-	var addrs []string
+	var parts []string
 	seen := make(map[string]bool)
 	for _, l := range listeners {
-		addr := extractListenerAddr(l)
-		if addr == "" || seen[addr] {
+		if seen[l] {
 			continue
 		}
-		seen[addr] = true
-		addrs = append(addrs, addr)
+		seen[l] = true
+		parts = append(parts, l)
 	}
-	if len(addrs) == 0 {
+	if len(parts) == 0 {
 		return "-"
 	}
-	return strings.Join(addrs, ", ")
+	return strings.Join(parts, ", ")
 }
 
-// formatListenerAddrsColored returns listener addresses with non-local ones in red.
+// formatListenerAddrsColored returns "proto@ip:port, ..." with non-local ones in red.
 func formatListenerAddrsColored(listeners []string) string {
 	var parts []string
 	seen := make(map[string]bool)
 	for _, l := range listeners {
-		addr := extractListenerAddr(l)
-		if addr == "" || seen[addr] {
+		if seen[l] {
 			continue
 		}
-		seen[addr] = true
+		seen[l] = true
+		_, addr := parseListener(l)
 		if isLocalAddr(addr) {
-			parts = append(parts, addr)
+			parts = append(parts, l)
 		} else {
-			parts = append(parts, Red(addr))
+			parts = append(parts, Red(l))
 		}
 	}
 	if len(parts) == 0 {
