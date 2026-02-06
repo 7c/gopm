@@ -111,8 +111,8 @@ func TestDefaultRestartPolicy(t *testing.T) {
 	if p.AutoRestart != RestartAlways {
 		t.Errorf("AutoRestart = %q, want %q", p.AutoRestart, RestartAlways)
 	}
-	if p.MaxRestarts != 15 {
-		t.Errorf("MaxRestarts = %d, want 15", p.MaxRestarts)
+	if p.MaxRestarts != 0 {
+		t.Errorf("MaxRestarts = %d, want 0 (unlimited)", p.MaxRestarts)
 	}
 	if p.KillSignal != 15 {
 		t.Errorf("KillSignal = %d, want 15", p.KillSignal)

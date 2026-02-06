@@ -91,9 +91,9 @@ type RestartPolicy struct {
 func DefaultRestartPolicy() RestartPolicy {
 	return RestartPolicy{
 		AutoRestart:  RestartAlways,
-		MaxRestarts:  15,
+		MaxRestarts:  0, // 0 = unlimited
 		MinUptime:    Duration{5 * time.Second},
-		RestartDelay: Duration{1 * time.Second},
+		RestartDelay: Duration{2 * time.Second},
 		MaxDelay:     Duration{30 * time.Second},
 		KillSignal:   15, // SIGTERM
 		KillTimeout:  Duration{5 * time.Second},

@@ -529,7 +529,11 @@ func (m model) renderDetail() string {
 		kvLine("Memory", protocol.FormatBytes(p.Memory))
 	}
 	kvLine("Auto Restart", string(p.RestartPolicy.AutoRestart))
-	kvLine("Max Restarts", fmt.Sprintf("%d", p.RestartPolicy.MaxRestarts))
+	if p.RestartPolicy.MaxRestarts > 0 {
+		kvLine("Max Restarts", fmt.Sprintf("%d", p.RestartPolicy.MaxRestarts))
+	} else {
+		kvLine("Max Restarts", "unlimited")
+	}
 	kvLine("Stdout Log", p.LogOut)
 	kvLine("Stderr Log", p.LogErr)
 

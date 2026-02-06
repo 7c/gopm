@@ -68,10 +68,8 @@ var configShowCmd = &cobra.Command{
 				out["daemon_config_file"] = daemonConfigFile
 				out["daemon_config_source"] = daemonConfigSource
 			}
-			if isSystemdInstalled() {
-				out["systemd_installed"] = true
-				out["systemd_unit_file"] = unitFilePath
-			}
+			out["systemd_unit_file"] = unitFilePath
+			out["systemd_installed"] = isSystemdInstalled()
 			data, _ := json.MarshalIndent(out, "", "  ")
 			fmt.Println(string(data))
 			return
@@ -122,10 +120,12 @@ var configShowCmd = &cobra.Command{
 			fmt.Printf("  Telegraf:     disabled\n")
 		}
 
-		// Check for systemd installation
+		fmt.Printf("\n%s\n", display.Bold("Systemd:"))
+		fmt.Printf("  Unit file:    %s\n", unitFilePath)
 		if isSystemdInstalled() {
-			fmt.Printf("\n%s\n", display.Bold("Systemd:"))
-			fmt.Printf("  Installed:    %s\n", display.Yellow("yes")+" ("+unitFilePath+")")
+			fmt.Printf("  Installed:    %s\n", display.Green("yes"))
+		} else {
+			fmt.Printf("  Installed:    %s\n", display.Dim("no"))
 		}
 
 		for _, w := range warnings {

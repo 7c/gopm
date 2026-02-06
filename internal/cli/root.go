@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
+	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/daemon"
 	"github.com/7c/gopm/internal/display"
+	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +24,7 @@ var jsonOutput bool
 var rootCmd = &cobra.Command{
 	Use:   "gopm",
 	Short: display.CBold + "GoPM" + display.CReset + " — Lightweight Process Manager",
+	Run:   runRoot,
 }
 
 // coloredHelpTemplate is the Cobra help template with ANSI colors.
@@ -54,6 +58,35 @@ var coloredHelpTemplate = `{{with .Long}}{{. | trimTrailingWhitespaces}}
 {{end}}` +
 	`{{if .HasAvailableSubCommands}}Use "{{.CommandPath}} [command] --help" for more information about a command.
 {{end}}`
+
+// runRoot is called when gopm is invoked without a subcommand.
+// If the daemon has processes, show the list; otherwise show help.
+func runRoot(cmd *cobra.Command, args []string) {
+	c, err := client.TryConnect(configFlag)
+	if err != nil {
+		cmd.Help()
+		return
+	}
+	defer c.Close()
+
+	resp, err := c.Send(protocol.MethodList, nil)
+	if err != nil || !resp.Success {
+		cmd.Help()
+		return
+	}
+
+	var procs []protocol.ProcessInfo
+	if err := json.Unmarshal(resp.Data, &procs); err != nil || len(procs) == 0 {
+		cmd.Help()
+		return
+	}
+
+	if jsonOutput {
+		outputJSON(resp.Data)
+		return
+	}
+	display.RenderProcessList(os.Stdout, procs)
+}
 
 // Execute sets up the root command, registers all subcommands, and runs cobra.
 func Execute() {

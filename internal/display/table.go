@@ -215,7 +215,11 @@ func RenderDescribe(w io.Writer, p protocol.ProcessInfo) {
 		addKVc("Memory", "-", Dim("-"))
 	}
 	addKV("Auto Restart", string(p.RestartPolicy.AutoRestart))
-	addKV("Max Restarts", fmt.Sprintf("%d", p.RestartPolicy.MaxRestarts))
+	if p.RestartPolicy.MaxRestarts > 0 {
+		addKV("Max Restarts", fmt.Sprintf("%d", p.RestartPolicy.MaxRestarts))
+	} else {
+		addKV("Max Restarts", "unlimited")
+	}
 	addKV("Min Uptime", p.RestartPolicy.MinUptime.String())
 	addKV("Restart Delay", p.RestartPolicy.RestartDelay.String())
 	addKV("Exp Backoff", fmt.Sprintf("%v", p.RestartPolicy.ExpBackoff))

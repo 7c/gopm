@@ -24,11 +24,11 @@ GoPM is a minimal alternative to PM2 for managing long-running processes on Linu
 ### Install
 
 ```bash
-# Download (or build from source)
-go build -o gopm ./cmd/gopm/
-sudo mv gopm /usr/local/bin/
+# Install from source
+go install github.com/7c/gopm@latest
 
-# Install as systemd service (auto-detects your user)
+# Or build locally
+make build
 sudo gopm install
 ```
 
@@ -99,9 +99,9 @@ Flags:
   --interpreter string       Interpreter: python3, node, bash, etc.
   --env KEY=VAL              Environment variable (repeatable)
   --autorestart string       Restart mode: always|on-failure|never (default: always)
-  --max-restarts int         Max consecutive restarts, 0=unlimited (default: 15)
+  --max-restarts int         Max consecutive restarts, 0=unlimited (default: unlimited)
   --min-uptime duration      Min uptime to reset restart counter (default: 5s)
-  --restart-delay duration   Base delay between restarts (default: 1s)
+  --restart-delay duration   Base delay between restarts (default: 2s)
   --exp-backoff              Enable exponential backoff on restart delay
   --max-delay duration       Max backoff delay cap (default: 30s)
   --kill-timeout duration    Time before SIGKILL after SIGTERM (default: 5s)
@@ -368,7 +368,7 @@ sudo gopm install --user deploy    # run as deploy user
 ```
 
 **What it does:**
-1. Copies the `gopm` binary to `/usr/local/bin/gopm`
+1. Symlinks the current `gopm` binary to `/usr/local/bin/gopm` (re-running install updates the link)
 2. Creates `/etc/systemd/system/gopm.service`
 3. Runs `systemctl daemon-reload`
 4. Enables the service (`systemctl enable gopm`)
@@ -589,6 +589,40 @@ gopm pid $$                   # inspect your own shell
 
 If the gopm daemon is running and the PID belongs to a managed process, extra metadata (name, restarts, log paths) is shown in the GoPM Info section.
 
+### `gopm pm2`
+
+One-time migration from PM2. Reads all PM2 processes, starts each in gopm with equivalent settings, and removes them from PM2. Verbose output shows every field being imported.
+
+```
+Usage:
+  gopm pm2
+```
+
+**What it imports:**
+- Script path, arguments, working directory, interpreter
+- Environment variables (PM2 internal vars are filtered out)
+- Restart policy: autorestart, max_restarts, restart_delay, min_uptime, kill_timeout
+- Cluster-mode processes are imported as single fork-mode processes (with a warning)
+
+**Example output:**
+
+```
+Found 2 PM2 process(es)
+
+━━━ [1/2] my-api (pm2_id=0, PID=1234, online) ━━━
+  command:      /home/user/api/server.js
+  interpreter:  node
+  cwd:          /home/user/api
+  args:         --port 3000
+  env:          NODE_ENV=production, PORT=3000
+  autorestart:  always
+  max_restarts: 16
+  → Starting in gopm... OK (id=1)
+  → Removing from PM2... OK
+
+Summary: imported 2/2 processes
+```
+
 ---
 
 ## JSON Output & Scripting
@@ -659,10 +693,10 @@ GoPM provides granular control over when and how crashed processes restart.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--max-restarts` | 15 | Maximum consecutive restarts before marking as errored. Set to 0 for unlimited. |
+| `--max-restarts` | unlimited | Maximum consecutive restarts before marking as errored. |
 | `--min-uptime` | 5s | If the process stays alive longer than this, the restart counter resets to 0. |
-| `--restart-delay` | 1s | Base delay between restart attempts. |
-| `--exp-backoff` | false | Enable exponential backoff: delay doubles each restart (1s, 2s, 4s, 8s...). |
+| `--restart-delay` | 2s | Base delay between restart attempts. |
+| `--exp-backoff` | false | Enable exponential backoff: delay doubles each restart (2s, 4s, 8s, 16s...). |
 | `--max-delay` | 30s | Maximum delay cap when using exponential backoff. |
 | `--kill-timeout` | 5s | Time to wait after SIGTERM before sending SIGKILL. |
 
