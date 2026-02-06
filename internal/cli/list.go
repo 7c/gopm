@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var listPorts bool
+
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
@@ -45,6 +47,10 @@ var listCmd = &cobra.Command{
 			return
 		}
 
-		display.RenderProcessList(os.Stdout, procs)
+		display.RenderProcessList(os.Stdout, procs, listPorts)
 	},
+}
+
+func init() {
+	listCmd.Flags().BoolVarP(&listPorts, "ports", "p", false, "show listening ports column")
 }

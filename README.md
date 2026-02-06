@@ -183,23 +183,36 @@ Usage:
   gopm list [flags]
 
 Flags:
-  --json            Output as JSON array
+  -p, --ports       Show listening ports column
+      --json        Output as JSON array
 ```
 
 **Output:**
 
 ```
-┌────┬──────────┬────────┬──────┬────────┬──────────┬─────────┬────────┬────────────┐
-│ ID │ Name     │ Status │ PID  │ CPU    │ Memory   │ Restart │ Uptime │ Ports      │
-├────┼──────────┼────────┼──────┼────────┼──────────┼─────────┼────────┼────────────┤
-│ 0  │ api      │ online │ 4521 │ 0.3%   │ 24.1 MB  │ 0       │ 2h 15m │ 8080       │
-│ 1  │ worker   │ online │ 4523 │ 12.1%  │ 128.5 MB │ 3       │ 45m    │ -          │
-│ 2  │ cron     │ stopped│ -    │ -      │ -        │ 0       │ -      │ -          │
-│ 3  │ proxy    │ errored│ -    │ -      │ -        │ 15      │ -      │ -          │
-└────┴──────────┴────────┴──────┴────────┴──────────┴─────────┴────────┴────────────┘
+┌────┬──────────┬─────────┬──────┬────────┬──────────┬─────────┬────────┐
+│ ID │ Name     │ Status  │ PID  │ CPU    │ Memory   │ Restart │ Uptime │
+├────┼──────────┼─────────┼──────┼────────┼──────────┼─────────┼────────┤
+│ 0  │ api      │ online  │ 4521 │ 0.3%   │ 24.1 MB  │ 0       │ 2h 15m │
+│ 1  │ worker   │ online  │ 4523 │ 12.1%  │ 128.5 MB │ 3       │ 45m    │
+│ 2  │ cron     │ stopped │ -    │ -      │ -        │ 0       │ -      │
+│ 3  │ proxy    │ errored │ -    │ -      │ -        │ 15      │ -      │
+└────┴──────────┴─────────┴──────┴────────┴──────────┴─────────┴────────┘
 ```
 
-The **Ports** column shows listening TCP/UDP ports for each process. A background worker scans listeners every 60 seconds.
+Use `--ports` / `-p` to show listening TCP/UDP ports (scanned every 60s by a background worker):
+
+```
+gopm list -p
+┌────┬──────────┬────────┬──────┬────────┬──────────┬─────────┬────────┬──────────────────────────────────┐
+│ ID │ Name     │ Status │ PID  │ CPU    │ Memory   │ Restart │ Uptime │ Ports                            │
+├────┼──────────┼────────┼──────┼────────┼──────────┼─────────┼────────┼──────────────────────────────────┤
+│ 0  │ api      │ online │ 4521 │ 0.3%   │ 24.1 MB  │ 0       │ 2h 15m │ tcp@127.0.0.1:8080               │
+│ 1  │ worker   │ online │ 4523 │ 12.1%  │ 128.5 MB │ 3       │ 45m    │ -                                │
+└────┴──────────┴────────┴──────┴────────┴──────────┴─────────┴────────┴──────────────────────────────────┘
+```
+
+Non-local listeners (e.g. `tcp@0.0.0.0:3000`) are highlighted in red.
 
 ### `gopm describe`
 

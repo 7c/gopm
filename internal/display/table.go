@@ -107,8 +107,13 @@ func (t *Table) coloredRow(w io.Writer, rawCols, colorCols []string) {
 }
 
 // RenderProcessList renders the process list table with colored status.
-func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
-	tbl := NewTable("ID", "Name", "Status", "PID", "CPU", "Memory", "Restart", "Uptime", "Ports")
+// If showPorts is true, a Ports column is included.
+func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo, showPorts bool) {
+	headers := []string{"ID", "Name", "Status", "PID", "CPU", "Memory", "Restart", "Uptime"}
+	if showPorts {
+		headers = append(headers, "Ports")
+	}
+	tbl := NewTable(headers...)
 	for _, p := range procs {
 		pid := Dim("-")
 		cpu := Dim("-")
@@ -131,7 +136,7 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 				rawUptime = protocol.FormatDuration(time.Since(p.Uptime))
 				uptime = rawUptime
 			}
-			if len(p.Listeners) > 0 {
+			if showPorts && len(p.Listeners) > 0 {
 				rawPorts = formatListenerAddrs(p.Listeners)
 				ports = formatListenerAddrsColored(p.Listeners)
 			}
@@ -152,7 +157,6 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 			rawMem,
 			fmt.Sprintf("%d", p.Restarts),
 			rawUptime,
-			rawPorts,
 		}
 		colored := []string{
 			Dim(fmt.Sprintf("%d", p.ID)),
@@ -163,7 +167,10 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 			mem,
 			fmt.Sprintf("%d", p.Restarts),
 			uptime,
-			ports,
+		}
+		if showPorts {
+			raw = append(raw, rawPorts)
+			colored = append(colored, ports)
 		}
 		tbl.AddColoredRow(raw, colored)
 	}

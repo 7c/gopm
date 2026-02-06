@@ -88,7 +88,7 @@ func runRoot(cmd *cobra.Command, args []string) {
 		outputJSON(resp.Data)
 		return
 	}
-	display.RenderProcessList(os.Stdout, procs)
+	display.RenderProcessList(os.Stdout, procs, false)
 }
 
 // Execute sets up the root command, registers all subcommands, and runs cobra.

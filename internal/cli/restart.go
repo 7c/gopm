@@ -50,7 +50,7 @@ func runRestart(cmd *cobra.Command, args []string) {
 
 	var multi []protocol.ProcessInfo
 	if err := json.Unmarshal(resp.Data, &multi); err == nil {
-		display.RenderProcessList(os.Stdout, multi)
+		display.RenderProcessList(os.Stdout, multi, false)
 		return
 	}
 
