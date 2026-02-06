@@ -256,21 +256,19 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
-	if !scanner.Scan() {
-		return
-	}
+	for scanner.Scan() {
+		var req protocol.Request
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			resp := protocol.Response{Error: "invalid request: " + err.Error()}
+			data, _ := json.Marshal(resp)
+			fmt.Fprintf(conn, "%s\n", data)
+			return
+		}
 
-	var req protocol.Request
-	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-		resp := protocol.Response{Error: "invalid request: " + err.Error()}
+		resp := d.handleRequest(req)
 		data, _ := json.Marshal(resp)
 		fmt.Fprintf(conn, "%s\n", data)
-		return
 	}
-
-	resp := d.handleRequest(req)
-	data, _ := json.Marshal(resp)
-	fmt.Fprintf(conn, "%s\n", data)
 }
 
 func (d *Daemon) handleRequest(req protocol.Request) protocol.Response {

@@ -19,6 +19,7 @@ import (
 // Client communicates with the gopm daemon over a Unix socket.
 type Client struct {
 	conn       net.Conn
+	scanner    *bufio.Scanner
 	home       string
 	configFlag string
 }
@@ -65,18 +66,20 @@ func (c *Client) Send(method string, params interface{}) (*protocol.Response, er
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 
-	// Read response
-	scanner := bufio.NewScanner(c.conn)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
+	// Read response using persistent scanner
+	if c.scanner == nil {
+		c.scanner = bufio.NewScanner(c.conn)
+		c.scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
+	}
+	if !c.scanner.Scan() {
+		if err := c.scanner.Err(); err != nil {
 			return nil, fmt.Errorf("read response: %w", err)
 		}
 		return nil, fmt.Errorf("connection closed")
 	}
 
 	var resp protocol.Response
-	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(c.scanner.Bytes(), &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 

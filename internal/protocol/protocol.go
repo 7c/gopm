@@ -237,6 +237,26 @@ func ParseSize(s string) (int64, error) {
 	return n * multiplier, nil
 }
 
+// FormatSize converts bytes to a compact size string (e.g. "1M", "50M", "1G").
+// This is the inverse of ParseSize.
+func FormatSize(b int64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+	switch {
+	case b >= GB && b%GB == 0:
+		return fmt.Sprintf("%dG", b/GB)
+	case b >= MB && b%MB == 0:
+		return fmt.Sprintf("%dM", b/MB)
+	case b >= KB && b%KB == 0:
+		return fmt.Sprintf("%dK", b/KB)
+	default:
+		return fmt.Sprintf("%d", b)
+	}
+}
+
 // FormatDuration formats a duration in a human-friendly way.
 func FormatDuration(d time.Duration) string {
 	if d < time.Second {

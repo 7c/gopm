@@ -78,6 +78,41 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
+func TestFormatSize(t *testing.T) {
+	tests := []struct {
+		input int64
+		want  string
+	}{
+		{1024 * 1024, "1M"},
+		{10 * 1024 * 1024, "10M"},
+		{50 * 1024 * 1024, "50M"},
+		{1024 * 1024 * 1024, "1G"},
+		{500 * 1024, "500K"},
+		{1024, "1K"},
+		{512, "512"},
+	}
+	for _, tt := range tests {
+		got := FormatSize(tt.input)
+		if got != tt.want {
+			t.Errorf("FormatSize(%d) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestFormatSizeRoundTrip(t *testing.T) {
+	sizes := []string{"1M", "10M", "50M", "1G", "500K"}
+	for _, s := range sizes {
+		n, err := ParseSize(s)
+		if err != nil {
+			t.Fatalf("ParseSize(%q) = %v", s, err)
+		}
+		got := FormatSize(n)
+		if got != s {
+			t.Errorf("FormatSize(ParseSize(%q)) = %q, want %q", s, got, s)
+		}
+	}
+}
+
 func TestDurationJSON(t *testing.T) {
 	d := Duration{5 * time.Second}
 	data, err := json.Marshal(d)

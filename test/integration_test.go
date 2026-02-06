@@ -396,6 +396,297 @@ func TestExtKillRestart(t *testing.T) {
 	}
 }
 
+func TestExportAll(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "exp1", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "exp2", "--", "--run-forever")
+	env.WaitForStatus("exp1", "online", 5*time.Second)
+	env.WaitForStatus("exp2", "online", 5*time.Second)
+
+	out := env.MustGopm("export", "all")
+	var eco map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &eco); err != nil {
+		t.Fatalf("export all not valid JSON: %v\noutput: %s", err, out)
+	}
+	apps, ok := eco["apps"].([]interface{})
+	if !ok || len(apps) != 2 {
+		t.Fatalf("expected 2 apps, got %v", eco["apps"])
+	}
+
+	// Verify app fields
+	for _, a := range apps {
+		app := a.(map[string]interface{})
+		if app["command"] != env.TestappBin {
+			t.Errorf("command = %q, want %q", app["command"], env.TestappBin)
+		}
+		if app["name"] == nil {
+			t.Error("app missing name")
+		}
+	}
+}
+
+func TestExportByName(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "pick1", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "pick2", "--", "--run-forever")
+	env.WaitForStatus("pick1", "online", 5*time.Second)
+	env.WaitForStatus("pick2", "online", 5*time.Second)
+
+	out := env.MustGopm("export", "pick1")
+	var eco map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &eco); err != nil {
+		t.Fatalf("export by name not valid JSON: %v", err)
+	}
+	apps := eco["apps"].([]interface{})
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+	app := apps[0].(map[string]interface{})
+	if app["name"] != "pick1" {
+		t.Errorf("name = %q, want pick1", app["name"])
+	}
+}
+
+func TestExportByID(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "byid", "--", "--run-forever")
+	env.WaitForStatus("byid", "online", 5*time.Second)
+
+	out := env.MustGopm("export", "0")
+	var eco map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &eco); err != nil {
+		t.Fatalf("export by id not valid JSON: %v", err)
+	}
+	apps := eco["apps"].([]interface{})
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+	app := apps[0].(map[string]interface{})
+	if app["name"] != "byid" {
+		t.Errorf("name = %q, want byid", app["name"])
+	}
+}
+
+func TestExportFull(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "fullexp", "--", "--run-forever")
+	env.WaitForStatus("fullexp", "online", 5*time.Second)
+
+	out := env.MustGopm("export", "--full", "fullexp")
+	var eco map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &eco); err != nil {
+		t.Fatalf("export --full not valid JSON: %v", err)
+	}
+	apps := eco["apps"].([]interface{})
+	app := apps[0].(map[string]interface{})
+
+	// --full should include all restart policy fields even if they're defaults
+	requiredFields := []string{"autorestart", "max_restarts", "min_uptime", "restart_delay", "kill_timeout", "max_delay"}
+	for _, f := range requiredFields {
+		if _, ok := app[f]; !ok {
+			t.Errorf("--full export missing field %q", f)
+		}
+	}
+
+	// Should include log paths
+	if _, ok := app["log_out"]; !ok {
+		t.Error("--full export missing log_out")
+	}
+	if _, ok := app["log_err"]; !ok {
+		t.Error("--full export missing log_err")
+	}
+	if _, ok := app["max_log_size"]; !ok {
+		t.Error("--full export missing max_log_size")
+	}
+}
+
+func TestExportWithoutFull(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Start with all defaults — export without --full should have minimal fields
+	env.MustGopm("start", env.TestappBin, "--name", "minimal", "--", "--run-forever")
+	env.WaitForStatus("minimal", "online", 5*time.Second)
+
+	out := env.MustGopm("export", "minimal")
+	var eco map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &eco); err != nil {
+		t.Fatalf("export not valid JSON: %v", err)
+	}
+	apps := eco["apps"].([]interface{})
+	app := apps[0].(map[string]interface{})
+
+	// Default fields should NOT be present without --full
+	defaultFields := []string{"autorestart", "max_restarts", "min_uptime", "restart_delay", "kill_timeout", "log_out", "log_err", "max_log_size"}
+	for _, f := range defaultFields {
+		if _, ok := app[f]; ok {
+			t.Errorf("export without --full should not include default field %q", f)
+		}
+	}
+}
+
+func TestExportNew(t *testing.T) {
+	env := NewTestEnv(t)
+
+	out := env.MustGopm("export", "--new")
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatalf("export --new not valid JSON: %v\noutput: %s", err, out)
+	}
+	if _, ok := cfg["logs"]; !ok {
+		t.Error("sample config missing 'logs' section")
+	}
+}
+
+func TestExportNotFound(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "exists", "--", "--run-forever")
+	env.WaitForStatus("exists", "online", 5*time.Second)
+
+	_, _, code := env.Gopm("export", "nonexistent")
+	if code == 0 {
+		t.Error("export of nonexistent process should fail")
+	}
+}
+
+func TestImport(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Write an ecosystem file
+	ecoPath := env.WriteEcosystem(map[string]interface{}{
+		"apps": []map[string]interface{}{
+			{
+				"name":    "imp1",
+				"command": env.TestappBin,
+				"args":    []string{"--run-forever"},
+			},
+		},
+	})
+
+	out := env.MustGopm("import", ecoPath)
+	if !strings.Contains(out, "OK") {
+		t.Errorf("import output should contain OK: %q", out)
+	}
+	if !strings.Contains(out, "Imported 1/1") {
+		t.Errorf("import should report 1/1: %q", out)
+	}
+
+	env.WaitForStatus("imp1", "online", 5*time.Second)
+	if env.ProcessCount() != 1 {
+		t.Errorf("expected 1 process after import, got %d", env.ProcessCount())
+	}
+}
+
+func TestImportSkipsDuplicate(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Start a process first
+	env.MustGopm("start", env.TestappBin, "--name", "dup", "--", "--run-forever")
+	env.WaitForStatus("dup", "online", 5*time.Second)
+
+	// Export it, then try to import the same config
+	exportOut := env.MustGopm("export", "all")
+	ecoPath := filepath.Join(env.Home, "export.json")
+	if err := os.WriteFile(ecoPath, []byte(exportOut), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := env.MustGopm("import", ecoPath)
+	if !strings.Contains(out, "SKIP") {
+		t.Errorf("import should SKIP existing process: %q", out)
+	}
+	if !strings.Contains(out, "0/1") || !strings.Contains(out, "1 skipped") {
+		t.Errorf("import should report 0/1 (1 skipped): %q", out)
+	}
+
+	// Still only 1 process
+	if env.ProcessCount() != 1 {
+		t.Errorf("expected 1 process (no duplicate), got %d", env.ProcessCount())
+	}
+}
+
+func TestImportMultiple(t *testing.T) {
+	env := NewTestEnv(t)
+
+	ecoPath := env.WriteEcosystem(map[string]interface{}{
+		"apps": []map[string]interface{}{
+			{
+				"name":    "multi1",
+				"command": env.TestappBin,
+				"args":    []string{"--run-forever"},
+			},
+			{
+				"name":    "multi2",
+				"command": env.TestappBin,
+				"args":    []string{"--run-forever"},
+			},
+		},
+	})
+
+	out := env.MustGopm("import", ecoPath)
+	if !strings.Contains(out, "Imported 2/2") {
+		t.Errorf("import should report 2/2: %q", out)
+	}
+
+	env.WaitForStatus("multi1", "online", 5*time.Second)
+	env.WaitForStatus("multi2", "online", 5*time.Second)
+	if env.ProcessCount() != 2 {
+		t.Errorf("expected 2 processes, got %d", env.ProcessCount())
+	}
+}
+
+func TestExportImportRoundTrip(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Start processes with non-default settings
+	env.MustGopm("start", env.TestappBin, "--name", "trip1",
+		"--autorestart", "on-failure",
+		"--restart-delay", "3s",
+		"--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "trip2", "--", "--run-forever")
+	env.WaitForStatus("trip1", "online", 5*time.Second)
+	env.WaitForStatus("trip2", "online", 5*time.Second)
+
+	// Export
+	exportOut := env.MustGopm("export", "all")
+	ecoPath := filepath.Join(env.Home, "roundtrip.json")
+	if err := os.WriteFile(ecoPath, []byte(exportOut), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete all
+	env.MustGopm("delete", "all")
+	time.Sleep(500 * time.Millisecond)
+	if env.ProcessCount() != 0 {
+		t.Fatal("expected 0 after delete all")
+	}
+
+	// Import back
+	out := env.MustGopm("import", ecoPath)
+	if !strings.Contains(out, "Imported 2/2") {
+		t.Errorf("round-trip import should report 2/2: %q", out)
+	}
+
+	env.WaitForStatus("trip1", "online", 5*time.Second)
+	env.WaitForStatus("trip2", "online", 5*time.Second)
+
+	// Verify non-default settings survived
+	out = env.MustGopm("describe", "trip1", "--json")
+	var proc map[string]interface{}
+	json.Unmarshal([]byte(out), &proc)
+	rp, _ := proc["restart_policy"].(map[string]interface{})
+	if ar, _ := rp["autorestart"].(string); ar != "on-failure" {
+		t.Errorf("autorestart = %q, want on-failure", ar)
+	}
+	if rd, _ := rp["restart_delay"].(string); rd != "3s" {
+		t.Errorf("restart_delay = %q, want 3s", rd)
+	}
+}
+
 func TestRebootQuickExit(t *testing.T) {
 	env := NewTestEnv(t)
 

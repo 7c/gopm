@@ -436,7 +436,8 @@ Usage:
   gopm export [all|name|id...] [flags]
 
 Flags:
-  -n, --new    Print sample gopm.config.json with all defaults
+  -n, --new     Print sample gopm.config.json with all defaults
+      --full    Include all configurable settings (even defaults)
 ```
 
 **Export processes:**
@@ -450,12 +451,50 @@ gopm export all > ecosystem.json           # save and re-launch later
 gopm start ecosystem.json
 ```
 
+By default, only non-default settings are included (keeps the JSON minimal). Use `--full` to include every configurable field — useful when you want a complete template to edit:
+
+```bash
+gopm export --full all > ecosystem.json    # all settings, ready to tweak
+gopm export --full api > api.json          # single process, full config
+```
+
+The `--full` flag adds: `autorestart`, `max_restarts`, `min_uptime`, `restart_delay`, `exp_backoff`, `max_delay`, `kill_timeout`, `log_out`, `log_err`, `max_log_size`.
+
 **Sample config:**
 
 ```bash
 gopm export --new                          # print sample gopm.config.json
 gopm export -n > ~/.gopm/gopm.config.json  # bootstrap config
 ```
+
+### `gopm import`
+
+Import processes from an ecosystem JSON file. Processes that already exist (matched by command + working directory) are skipped.
+
+```
+Usage:
+  gopm import <ecosystem.json>
+```
+
+**Examples:**
+
+```bash
+gopm import ecosystem.json               # import all apps from file
+gopm export all > backup.json            # backup current processes
+gopm import backup.json                  # restore (skips duplicates)
+```
+
+**Output:**
+
+```
+OK   api (PID: 4521)
+OK   worker (PID: 4523)
+SKIP cron (matches existing "cron": /usr/local/bin/cron in /opt/app)
+
+Imported 2/3 processes (1 skipped)
+```
+
+Duplicate detection uses the combination of `command` + `cwd` as identifier. If a process with the same command running in the same directory already exists, it is skipped with a warning.
 
 ### `gopm suspend`
 
@@ -998,7 +1037,7 @@ You: "Who started process 4521? Show me the chain"
 
 ## Telegraf Telemetry
 
-GoPM can optionally export per-process and daemon-level metrics to Telegraf via InfluxDB line protocol over UDP. Metrics are emitted every 2 seconds alongside the normal metrics sampling.
+GoPM can optionally export per-process and daemon-level metrics to Telegraf via InfluxDB line protocol over UDP. This is fire-and-forget (UDP) — if Telegraf is down, metrics are silently dropped with zero impact on gopm.
 
 ### Enable via config
 
@@ -1013,10 +1052,99 @@ GoPM can optionally export per-process and daemon-level metrics to Telegraf via 
 }
 ```
 
-### Metrics exported
+Set `"telemetry": null` to explicitly disable. Omitting the section entirely also keeps telemetry disabled (it's opt-in).
 
-**Per-process:** `cpu`, `memory`, `restarts`, `status`, `uptime_seconds`
-**Daemon summary:** `total_processes`, `online_count`, `stopped_count`, `errored_count`, `daemon_uptime_seconds`
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `udp` | `127.0.0.1:8094` | Telegraf socket_listener address |
+| `measurement` | `gopm` | InfluxDB measurement name prefix |
+
+### Emission interval
+
+Metrics are emitted **every 2 seconds**, piggy-backing on the same ticker that samples CPU and memory. Each emission sends one UDP packet containing all lines (one per process + one daemon summary).
+
+### Per-process metrics
+
+Measurement: `<measurement>` (e.g. `gopm`)
+
+**Tags:**
+
+| Tag | Example | Description |
+|-----|---------|-------------|
+| `name` | `api` | Process name |
+| `id` | `0` | Process ID |
+| `status` | `online` | Current status |
+
+**Fields (online processes):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pid` | integer | OS process ID |
+| `cpu` | float | CPU usage percentage |
+| `memory` | integer | Resident memory in bytes |
+| `restarts` | integer | Total restart count |
+| `uptime` | integer | Seconds since last start |
+
+**Fields (stopped/errored processes):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `restarts` | integer | Total restart count |
+
+### Daemon summary metrics
+
+Measurement: `<measurement>_daemon` (e.g. `gopm_daemon`)
+
+**Tags:**
+
+| Tag | Example | Description |
+|-----|---------|-------------|
+| `host` | `nyc1` | System hostname |
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `processes_total` | integer | Total managed processes |
+| `processes_online` | integer | Currently running |
+| `processes_stopped` | integer | Stopped processes |
+| `processes_errored` | integer | Errored (max restarts hit) |
+| `daemon_uptime` | integer | Daemon uptime in seconds |
+
+### Example line protocol output
+
+```
+gopm,name=api,id=0,status=online pid=4521i,cpu=1.200000,memory=25296896i,restarts=0i,uptime=3600i 1738800000000000000
+gopm,name=worker,id=1,status=online pid=4523i,cpu=12.100000,memory=134742016i,restarts=3i,uptime=2700i 1738800000000000000
+gopm,name=cron,id=2,status=stopped restarts=0i 1738800000000000000
+gopm_daemon,host=nyc1 processes_total=3i,processes_online=2i,processes_stopped=1i,processes_errored=0i,daemon_uptime=86400i 1738800000000000000
+```
+
+### Telegraf input config
+
+Add this to your `telegraf.conf`:
+
+```toml
+[[inputs.socket_listener]]
+  service_address = "udp://127.0.0.1:8094"
+  data_format = "influx"
+```
+
+### Grafana queries
+
+```sql
+-- CPU usage per process over time
+SELECT mean("cpu") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+
+-- Memory usage per process
+SELECT mean("memory") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+
+-- Restart count over time (detect crash loops)
+SELECT max("restarts") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+
+-- Online process count
+SELECT last("processes_online") FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
+```
 
 ---
 

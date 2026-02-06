@@ -32,6 +32,7 @@ const defaultConfig = `{
 }`
 
 var exportNew bool
+var exportFull bool
 
 var exportCmd = &cobra.Command{
 	Use:   "export [all|name|id...]",
@@ -47,6 +48,11 @@ Export processes (pipe to a file to save):
   gopm export api worker        # multiple processes by name
   gopm export all > ecosystem.json
   gopm start ecosystem.json     # re-launch from exported config
+
+Export with all configurable settings (including defaults):
+
+  gopm export --full all
+  gopm export --full api > api.json   # edit and re-import
 
 Print a sample gopm.config.json with all defaults:
 
@@ -71,6 +77,7 @@ Config file search order:
 
 func init() {
 	exportCmd.Flags().BoolVarP(&exportNew, "new", "n", false, "print sample gopm.config.json with all defaults")
+	exportCmd.Flags().BoolVar(&exportFull, "full", false, "include all configurable settings (even defaults)")
 }
 
 func runExport(cmd *cobra.Command, args []string) {
@@ -152,7 +159,7 @@ func runExport(cmd *cobra.Command, args []string) {
 		Apps: make([]config.AppConfig, 0, len(selected)),
 	}
 	for _, p := range selected {
-		eco.Apps = append(eco.Apps, processToAppConfig(p))
+		eco.Apps = append(eco.Apps, processToAppConfig(p, exportFull))
 	}
 
 	data, err := json.MarshalIndent(eco, "", "  ")
@@ -163,8 +170,9 @@ func runExport(cmd *cobra.Command, args []string) {
 }
 
 // processToAppConfig converts a running ProcessInfo back to an AppConfig
-// suitable for an ecosystem JSON file.
-func processToAppConfig(p protocol.ProcessInfo) config.AppConfig {
+// suitable for an ecosystem JSON file. When full is true, all configurable
+// settings are included even if they match the defaults.
+func processToAppConfig(p protocol.ProcessInfo, full bool) config.AppConfig {
 	app := config.AppConfig{
 		Name:    p.Name,
 		Command: p.Command,
@@ -183,31 +191,41 @@ func processToAppConfig(p protocol.ProcessInfo) config.AppConfig {
 		app.Env = p.Env
 	}
 
-	// Restart policy — include non-default values.
 	defaults := protocol.DefaultRestartPolicy()
 	rp := p.RestartPolicy
 
-	if rp.AutoRestart != defaults.AutoRestart {
+	if full || rp.AutoRestart != defaults.AutoRestart {
 		app.AutoRestart = string(rp.AutoRestart)
 	}
-	if rp.MaxRestarts != defaults.MaxRestarts {
-		mr := rp.MaxRestarts
+	mr := rp.MaxRestarts
+	if full || rp.MaxRestarts != defaults.MaxRestarts {
 		app.MaxRestarts = &mr
 	}
-	if rp.MinUptime.Duration != defaults.MinUptime.Duration {
+	if full || rp.MinUptime.Duration != defaults.MinUptime.Duration {
 		app.MinUptime = rp.MinUptime.Duration.String()
 	}
-	if rp.RestartDelay.Duration != defaults.RestartDelay.Duration {
+	if full || rp.RestartDelay.Duration != defaults.RestartDelay.Duration {
 		app.RestartDelay = rp.RestartDelay.Duration.String()
 	}
-	if rp.ExpBackoff != defaults.ExpBackoff {
+	if full || rp.ExpBackoff != defaults.ExpBackoff {
 		app.ExpBackoff = rp.ExpBackoff
 	}
-	if rp.MaxDelay.Duration != defaults.MaxDelay.Duration {
+	if full || rp.MaxDelay.Duration != defaults.MaxDelay.Duration {
 		app.MaxDelay = rp.MaxDelay.Duration.String()
 	}
-	if rp.KillTimeout.Duration != defaults.KillTimeout.Duration {
+	if full || rp.KillTimeout.Duration != defaults.KillTimeout.Duration {
 		app.KillTimeout = rp.KillTimeout.Duration.String()
+	}
+	if full {
+		if p.LogOut != "" {
+			app.LogOut = p.LogOut
+		}
+		if p.LogErr != "" {
+			app.LogErr = p.LogErr
+		}
+		if p.MaxLogSize > 0 {
+			app.MaxLogSize = protocol.FormatSize(p.MaxLogSize)
+		}
 	}
 
 	return app
