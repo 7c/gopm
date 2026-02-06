@@ -1,6 +1,6 @@
 .PHONY: build build-all test-build test test-short test-stress test-install test-race clean
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION ?= $(shell cat version.txt 2>/dev/null || echo "dev")
 LDFLAGS = -s -w -X main.Version=$(VERSION)
 GOPM_BIN = test/bin/gopm
 TESTAPP_BIN = test/bin/testapp
