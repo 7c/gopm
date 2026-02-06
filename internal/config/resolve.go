@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -47,20 +48,22 @@ func Resolve(cfg *Config, gopmHome string) (*Resolved, []string, error) {
 		r.LogDir = logDefaults.Directory
 		r.LogMaxSize = 1048576
 		r.LogMaxFiles = 3
-	} else if isJSONNull(*cfg.Logs) {
+	} else if isJSONNull(cfg.Logs) {
 		warnings = append(warnings, "logs: null treated as defaults (logging cannot be disabled)")
 		r.LogDir = logDefaults.Directory
 		r.LogMaxSize = 1048576
 		r.LogMaxFiles = 3
 	} else {
 		logs := logDefaults
-		if err := json.Unmarshal(*cfg.Logs, &logs); err != nil {
+		if err := json.Unmarshal(cfg.Logs, &logs); err != nil {
 			return nil, nil, fmt.Errorf("logs: %w", err)
 		}
 		// Resolve ~ in directory
-		if strings.HasPrefix(logs.Directory, "~") {
-			logs.Directory = filepath.Join(gopmHome, logs.Directory[1:])
-			logs.Directory = filepath.Clean(logs.Directory)
+		if strings.HasPrefix(logs.Directory, "~/") {
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				logs.Directory = filepath.Join(home, logs.Directory[2:])
+			}
 		}
 		// Validate max_size
 		maxSize, err := protocol.ParseSize(logs.MaxSize)
@@ -81,11 +84,11 @@ func Resolve(cfg *Config, gopmHome string) (*Resolved, []string, error) {
 		r.MCPEnabled = true
 		r.MCPBindAddrs = resolveBindAddrs(nil, 18999)
 		r.MCPURI = "/mcp"
-	} else if isJSONNull(*cfg.MCPServer) {
+	} else if isJSONNull(cfg.MCPServer) {
 		r.MCPEnabled = false
 	} else {
 		mcp := MCPServerConfig{Port: 18999, URI: "/mcp"}
-		if err := json.Unmarshal(*cfg.MCPServer, &mcp); err != nil {
+		if err := json.Unmarshal(cfg.MCPServer, &mcp); err != nil {
 			return nil, nil, fmt.Errorf("mcpserver: %w", err)
 		}
 		// Validate port
@@ -110,11 +113,11 @@ func Resolve(cfg *Config, gopmHome string) (*Resolved, []string, error) {
 	// --- Telemetry (absent/null = disabled) ---
 	if cfg == nil || cfg.Telemetry == nil {
 		r.TelegrafEnabled = false
-	} else if isJSONNull(*cfg.Telemetry) {
+	} else if isJSONNull(cfg.Telemetry) {
 		r.TelegrafEnabled = false
 	} else {
 		var tel TelemetryConfig
-		if err := json.Unmarshal(*cfg.Telemetry, &tel); err != nil {
+		if err := json.Unmarshal(cfg.Telemetry, &tel); err != nil {
 			return nil, nil, fmt.Errorf("telemetry: %w", err)
 		}
 		if tel.Telegraf == nil {
@@ -140,10 +143,10 @@ func Resolve(cfg *Config, gopmHome string) (*Resolved, []string, error) {
 	return r, warnings, nil
 }
 
-// resolveBindAddrs resolves an empty device list to 0.0.0.0.
+// resolveBindAddrs resolves an empty device list to localhost (127.0.0.1).
 func resolveBindAddrs(devices []string, port int) []BindAddr {
 	if len(devices) == 0 {
-		return []BindAddr{{Addr: fmt.Sprintf("0.0.0.0:%d", port), Label: "all"}}
+		return []BindAddr{{Addr: fmt.Sprintf("127.0.0.1:%d", port), Label: "loopback"}}
 	}
 	var addrs []BindAddr
 	for _, dev := range devices {
@@ -156,7 +159,7 @@ func resolveBindAddrs(devices []string, port int) []BindAddr {
 		}
 	}
 	if len(addrs) == 0 {
-		return []BindAddr{{Addr: fmt.Sprintf("0.0.0.0:%d", port), Label: "all"}}
+		return []BindAddr{{Addr: fmt.Sprintf("127.0.0.1:%d", port), Label: "loopback"}}
 	}
 	return addrs
 }
@@ -164,7 +167,7 @@ func resolveBindAddrs(devices []string, port int) []BindAddr {
 // resolveDevices resolves device names to bind addresses with warnings.
 func resolveDevices(devices []string, port int) ([]BindAddr, []string) {
 	if len(devices) == 0 {
-		return []BindAddr{{Addr: fmt.Sprintf("0.0.0.0:%d", port), Label: "all"}}, nil
+		return []BindAddr{{Addr: fmt.Sprintf("127.0.0.1:%d", port), Label: "loopback"}}, nil
 	}
 	var addrs []BindAddr
 	var warnings []string
@@ -180,7 +183,7 @@ func resolveDevices(devices []string, port int) ([]BindAddr, []string) {
 		})
 	}
 	if len(addrs) == 0 {
-		addrs = []BindAddr{{Addr: fmt.Sprintf("0.0.0.0:%d", port), Label: "all"}}
+		addrs = []BindAddr{{Addr: fmt.Sprintf("127.0.0.1:%d", port), Label: "loopback"}}
 	}
 	return addrs, warnings
 }

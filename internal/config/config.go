@@ -8,12 +8,12 @@ import (
 )
 
 // Config is the raw parsed gopm.config.json.
-// Each top-level key uses *json.RawMessage for three-state handling:
-// nil = absent, json null = explicitly disabled, object = configured.
+// Each top-level key uses json.RawMessage for three-state handling:
+// nil (absent) = use defaults, "null" = explicitly disabled, "{...}" = configured.
 type Config struct {
-	Logs      *json.RawMessage `json:"logs,omitempty"`
-	MCPServer *json.RawMessage `json:"mcpserver,omitempty"`
-	Telemetry *json.RawMessage `json:"telemetry,omitempty"`
+	Logs      json.RawMessage `json:"logs"`
+	MCPServer json.RawMessage `json:"mcpserver"`
+	Telemetry json.RawMessage `json:"telemetry"`
 }
 
 type LogsConfig struct {

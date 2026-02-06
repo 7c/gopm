@@ -232,9 +232,9 @@ Flags:
 │ CPU             │ 1.2%                             │
 │ Memory          │ 45.3 MB                          │
 │ Auto Restart    │ always                           │
-│ Max Restarts    │ 15                               │
+│ Max Restarts    │ unlimited                        │
 │ Min Uptime      │ 5s                               │
-│ Restart Delay   │ 1s                               │
+│ Restart Delay   │ 2s                               │
 │ Exp Backoff     │ false                            │
 │ Kill Signal     │ SIGTERM                          │
 │ Kill Timeout    │ 5s                               │
@@ -385,7 +385,7 @@ Usage:
   gopm uninstall
 ```
 
-Stops and disables the service, removes the unit file, optionally removes the binary. Does **not** delete `~/.gopm/` (your logs and config are preserved).
+Stops and disables the service, removes the unit file and `/usr/local/bin/gopm` symlink. Does **not** delete `~/.gopm/` (your logs and config are preserved).
 
 ### `gopm ping`
 
@@ -740,9 +740,9 @@ Deploy multiple applications from a single JSON configuration file.
         "KEY": "VALUE"
       },
       "autorestart": "always",
-      "max_restarts": 15,
+      "max_restarts": 0,
       "min_uptime": "5s",
-      "restart_delay": "1s",
+      "restart_delay": "2s",
       "exp_backoff": false,
       "max_delay": "30s",
       "kill_timeout": "5s",
@@ -890,12 +890,12 @@ GoPM uses an optional JSON config file (`gopm.config.json`) for daemon settings.
 
 Generate a complete config with all defaults: `gopm newconfig > ~/.gopm/gopm.config.json`
 
-The `mcpserver.device` list accepts IP addresses, interface names (e.g. `"tailscale0"`), or `"localhost"`. An empty list binds to all interfaces (`0.0.0.0`).
+The `mcpserver.device` list accepts IP addresses, interface names (e.g. `"tailscale0"`), or `"localhost"`. An empty list binds to localhost (`127.0.0.1`) only.
 
 ### Three-state config
 
 Each section supports three states:
-- **Absent** — use defaults (MCP enabled on `0.0.0.0:18999`)
+- **Absent** — use defaults (MCP enabled on `127.0.0.1:18999`)
 - **`null`** — explicitly disabled
 - **`{...}`** — configured with custom values
 
@@ -925,7 +925,7 @@ The MCP server uses the Streamable HTTP transport: `POST /mcp` for JSON-RPC 2.0 
 }
 ```
 
-When no config file exists, MCP is enabled by default on `0.0.0.0:18999`. Set `"mcpserver": null` to disable.
+When no config file exists, MCP is enabled by default on `127.0.0.1:18999` (loopback only). Set `"mcpserver": null` to disable.
 
 ### Exposed tools
 
@@ -1017,7 +1017,7 @@ Daemon (long-lived background process)
       └── child process N (...)
 ```
 
-The **daemon auto-starts** on the first CLI command if not already running. No manual daemon management needed.
+The **daemon auto-starts** on the first CLI command if not already running. No manual daemon management needed. Running `gopm` with no arguments shows the process list if any processes are managed, otherwise shows help.
 
 ### State directory
 
@@ -1051,10 +1051,8 @@ git clone https://github.com/7c/gopm.git
 cd gopm
 
 # Static binary for current platform (output: bin/gopm)
+# Version is read from version.txt automatically
 make build
-
-# Build with custom version
-make build VERSION=1.0.0
 
 # Cross-compile all platforms (output: bin/gopm-{os}-{arch})
 make build-all
@@ -1068,6 +1066,14 @@ make build-darwin-arm64
 
 All builds produce **fully static binaries** (`CGO_ENABLED=0`) with stripped symbols (`-s -w`). No runtime dependencies — just copy the binary to your server.
 
+### Install via `go install`
+
+```bash
+go install github.com/7c/gopm@latest
+```
+
+The version is automatically detected from Go module metadata.
+
 ### Build manually
 
 ```bash
@@ -1075,14 +1081,13 @@ All builds produce **fully static binaries** (`CGO_ENABLED=0`) with stripped sym
 go build -o gopm ./cmd/gopm/
 
 # Production build (stripped, static, versioned)
-CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=0.1.0" -o gopm ./cmd/gopm/
+CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$(cat version.txt)" -o gopm ./cmd/gopm/
 ```
 
-### Install
+### Install as systemd service
 
 ```bash
-sudo cp bin/gopm /usr/local/bin/
-sudo gopm install
+sudo gopm install    # symlinks binary to /usr/local/bin/ and sets up systemd
 ```
 
 ---
@@ -1159,7 +1164,8 @@ gopm/
 │   │   ├── reboot.go      # Daemon reboot (save + exit + restart)
 │   │   ├── suspend.go     # Suspend/unsuspend systemd service
 │   │   ├── pid.go         # Deep /proc process inspection (Linux)
-│   │   └── pid_stub.go    # Stub for non-Linux platforms
+│   │   ├── pid_stub.go    # Stub for non-Linux platforms
+│   │   └── pm2.go         # Import processes from PM2
 │   ├── gui/               # Terminal UI (Bubble Tea)
 │   │   ├── gui.go         # Main model & update loop
 │   │   ├── processlist.go # Process table component
@@ -1197,6 +1203,8 @@ gopm/
 │   ├── fixtures/          # Ecosystem JSON fixtures
 │   ├── helpers.go         # Test utilities
 │   └── integration/       # Integration test suites
+├── main.go               # Root entry point (for go install)
+├── version.txt           # Version number (read by Makefile)
 ├── Makefile
 ├── README.md
 ├── SPEC.md
@@ -1236,9 +1244,9 @@ gopm/
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Auto restart | `always` | Restart mode |
-| Max restarts | `15` | Before marking errored |
+| Max restarts | unlimited | Before marking errored (0 = no limit) |
 | Min uptime | `5s` | To reset restart counter |
-| Restart delay | `1s` | Between restart attempts |
+| Restart delay | `2s` | Between restart attempts |
 | Exp backoff | `false` | Exponential delay growth |
 | Max delay | `30s` | Backoff cap |
 | Kill signal | `SIGTERM` | First signal sent on stop |
@@ -1248,7 +1256,7 @@ gopm/
 | Max disk/process | `~8 MB` | (1+3 files) × 2 streams |
 | Metrics interval | `2s` | CPU/memory sampling |
 | Socket path | `~/.gopm/gopm.sock` | IPC endpoint |
-| MCP HTTP server | enabled on `0.0.0.0:18999` | Disable via `"mcpserver": null` |
+| MCP HTTP server | enabled on `127.0.0.1:18999` | Disable via `"mcpserver": null` |
 | Telegraf telemetry | disabled | Enable via config |
 | Config search | `~/.gopm/` → `/etc/` | Config file locations |
 

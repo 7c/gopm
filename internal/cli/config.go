@@ -37,8 +37,8 @@ var configShowCmd = &cobra.Command{
 			return
 		}
 
-		// Try to query the running daemon for its config
-		daemonConfigFile, daemonConfigSource := getDaemonConfig()
+		// Try to query the running daemon
+		daemonPing := getDaemonPing()
 
 		if jsonOutput {
 			out := map[string]interface{}{
@@ -64,9 +64,14 @@ var configShowCmd = &cobra.Command{
 				out["telegraf_addr"] = resolved.TelegrafAddr.String()
 				out["telegraf_measurement"] = resolved.TelegrafMeas
 			}
-			if daemonConfigFile != "" {
-				out["daemon_config_file"] = daemonConfigFile
-				out["daemon_config_source"] = daemonConfigSource
+			if daemonPing != nil {
+				out["daemon_pid"] = daemonPing.PID
+				out["daemon_uptime"] = daemonPing.Uptime
+				out["daemon_version"] = daemonPing.Version
+				if daemonPing.ConfigFile != "" {
+					out["daemon_config_file"] = daemonPing.ConfigFile
+					out["daemon_config_source"] = daemonPing.ConfigSource
+				}
 			}
 			out["systemd_unit_file"] = unitFilePath
 			out["systemd_installed"] = isSystemdInstalled()
@@ -82,12 +87,17 @@ var configShowCmd = &cobra.Command{
 		}
 		fmt.Printf("Config file:  %s\n", configLine)
 
-		// Show daemon config if available
-		if daemonConfigFile != "" {
-			daemonLine := fmt.Sprintf("%s (%s)", daemonConfigFile, daemonConfigSource)
-			fmt.Printf("Daemon using: %s\n", daemonLine)
-		} else if daemonConfigFile == "" && daemonConfigSource == "daemon-running" {
-			fmt.Printf("Daemon using: %s\n", "(defaults, no config file)")
+		// Show daemon info
+		if daemonPing != nil {
+			if daemonPing.ConfigFile != "" {
+				fmt.Printf("Daemon using: %s (%s)\n", daemonPing.ConfigFile, daemonPing.ConfigSource)
+			} else {
+				fmt.Printf("Daemon using: %s\n", "(defaults, no config file)")
+			}
+			fmt.Printf("Daemon:       PID %s, uptime %s, version %s\n",
+				display.Cyan(fmt.Sprintf("%d", daemonPing.PID)),
+				display.Bold(daemonPing.Uptime),
+				daemonPing.Version)
 		} else {
 			fmt.Printf("Daemon:       %s\n", display.Dim("(not running)"))
 		}
@@ -144,28 +154,23 @@ func isSystemdInstalled() bool {
 	return err == nil
 }
 
-// getDaemonConfig queries the running daemon for its config file.
-// Returns ("", "") if daemon is not running.
-// Returns ("", "daemon-running") if daemon is running but has no config file.
-func getDaemonConfig() (configFile, configSource string) {
+// getDaemonPing queries the running daemon for its status.
+// Returns nil if the daemon is not running or unreachable.
+func getDaemonPing() *protocol.PingResult {
 	c, err := client.TryConnect(configFlag)
 	if err != nil {
-		return "", ""
+		return nil
 	}
 	defer c.Close()
 
 	resp, err := c.Send(protocol.MethodPing, nil)
 	if err != nil || !resp.Success {
-		return "", ""
+		return nil
 	}
 
 	var ping protocol.PingResult
 	if err := json.Unmarshal(resp.Data, &ping); err != nil {
-		return "", ""
+		return nil
 	}
-
-	if ping.ConfigFile == "" {
-		return "", "daemon-running"
-	}
-	return ping.ConfigFile, ping.ConfigSource
+	return &ping
 }

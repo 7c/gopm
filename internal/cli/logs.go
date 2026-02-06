@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -43,6 +44,9 @@ If only one process is managed, the target can be omitted.`,
   # Show logs from all processes
   gopm logs all
   gopm logs all -n 10 --err
+
+  # Follow all processes
+  gopm logs all -f
 
   # Omit target when only one process exists
   gopm logs
@@ -111,8 +115,9 @@ func runLogs(cmd *cobra.Command, args []string) {
 	}
 
 	var result struct {
-		Content string `json:"content"`
-		LogPath string `json:"log_path"`
+		Content  string            `json:"content"`
+		LogPath  string            `json:"log_path"`
+		LogPaths map[string]string `json:"log_paths,omitempty"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		outputError(fmt.Sprintf("failed to parse log response: %v", err))
@@ -127,19 +132,22 @@ func runLogs(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if result.LogPath == "" {
-		// "all" target — no single file to follow.
-		return
+	// Follow mode: single file or multiple files.
+	if result.LogPath != "" {
+		followFile(result.LogPath, "")
+	} else if len(result.LogPaths) > 0 {
+		followMultipleFiles(result.LogPaths)
 	}
+}
 
-	// Tail the log file, reading new lines every 500ms until interrupted.
-	f, err := os.Open(result.LogPath)
+// followFile tails a single log file. If prefix is non-empty, each line is prefixed.
+func followFile(path string, prefix string) {
+	f, err := os.Open(path)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot open log file: %v", err))
 	}
 	defer f.Close()
 
-	// Seek to end of file so we only print new content.
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		outputError(fmt.Sprintf("cannot seek log file: %v", err))
 	}
@@ -148,7 +156,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	reader := bufio.NewReader(f)
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -159,7 +167,11 @@ func runLogs(cmd *cobra.Command, args []string) {
 			for {
 				line, err := reader.ReadString('\n')
 				if len(line) > 0 {
-					fmt.Print(colorizeLogLine(line))
+					if prefix != "" {
+						fmt.Print(display.Cyan(prefix) + " " + colorizeLogLine(line))
+					} else {
+						fmt.Print(colorizeLogLine(line))
+					}
 				}
 				if err != nil {
 					break
@@ -167,6 +179,67 @@ func runLogs(cmd *cobra.Command, args []string) {
 			}
 		}
 	}
+}
+
+// followMultipleFiles tails multiple log files concurrently with name prefixes.
+func followMultipleFiles(paths map[string]string) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Output mutex to prevent interleaved lines.
+	var mu sync.Mutex
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	for name, path := range paths {
+		f, err := os.Open(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: cannot open %s log: %v\n", name, err)
+			continue
+		}
+		if _, err := f.Seek(0, io.SeekEnd); err != nil {
+			f.Close()
+			fmt.Fprintf(os.Stderr, "WARNING: cannot seek %s log: %v\n", name, err)
+			continue
+		}
+
+		wg.Add(1)
+		go func(name string, f *os.File) {
+			defer wg.Done()
+			defer f.Close()
+
+			reader := bufio.NewReader(f)
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+
+			prefix := display.Cyan(fmt.Sprintf("%-15s", name)) + " "
+
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					for {
+						line, err := reader.ReadString('\n')
+						if len(line) > 0 {
+							mu.Lock()
+							fmt.Print(prefix + colorizeLogLine(line))
+							mu.Unlock()
+						}
+						if err != nil {
+							break
+						}
+					}
+				}
+			}
+		}(name, f)
+	}
+
+	// Wait for signal.
+	<-sigCh
+	close(done)
+	wg.Wait()
 }
 
 // colorizeLogContent applies colors to multi-line log content.
@@ -228,7 +301,11 @@ func showDaemonLog() {
 		return
 	}
 
-	// Follow mode
+	followDaemonLog(logPath)
+}
+
+// followDaemonLog tails the daemon.log file.
+func followDaemonLog(logPath string) {
 	f, err := os.Open(logPath)
 	if err != nil {
 		outputError(fmt.Sprintf("cannot open daemon.log: %v", err))
@@ -243,7 +320,7 @@ func showDaemonLog() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	reader := bufio.NewReader(f)
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {

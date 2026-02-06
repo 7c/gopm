@@ -529,12 +529,14 @@ func (d *Daemon) handleLogs(params json.RawMessage) protocol.Response {
 	if lp.Target == "all" {
 		d.mu.RLock()
 		var parts []string
+		logPaths := make(map[string]string) // name → log file path
 		for _, p := range d.processes {
 			info := p.Info()
 			logPath := info.LogOut
 			if lp.ErrOnly {
 				logPath = info.LogErr
 			}
+			logPaths[info.Name] = logPath
 			content, err := tailFile(logPath, lines)
 			if err != nil {
 				continue
@@ -547,8 +549,9 @@ func (d *Daemon) handleLogs(params json.RawMessage) protocol.Response {
 		d.mu.RUnlock()
 		combined := strings.Join(parts, "\n\n")
 		return successResponse(map[string]interface{}{
-			"content":  combined,
-			"log_path": "",
+			"content":   combined,
+			"log_path":  "",
+			"log_paths": logPaths,
 		})
 	}
 

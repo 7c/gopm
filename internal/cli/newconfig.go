@@ -40,10 +40,16 @@ Then edit the file to your needs. Set a section to null to disable it:
   "mcpserver": null      — disable the MCP HTTP server
   "telemetry": null      — disable telegraf telemetry
 
-Omitting a section entirely uses defaults (MCP enabled on 0.0.0.0:18999).
+Omitting a section entirely uses defaults (MCP enabled on 127.0.0.1:18999).
 
 Device list for mcpserver: IP addresses, interface names, or "localhost".
-An empty list binds to all interfaces (0.0.0.0).`,
+An empty list binds to localhost (127.0.0.1) only.
+
+Config file search order:
+  1. --config <path>              explicit flag (CLI and daemon)
+  2. ~/.gopm/gopm.config.json     user home directory
+  3. /etc/gopm.config.json        system-wide
+  4. (no file)                    built-in defaults`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println(defaultConfig)
