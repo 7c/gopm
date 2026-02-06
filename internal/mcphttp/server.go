@@ -226,8 +226,6 @@ func (s *Server) handleToolsCall(req *jsonRPCRequest) *jsonRPCResponse {
 		result = s.toolLogs(params.Arguments)
 	case "gopm_flush":
 		result = s.toolCallDaemon(protocol.MethodFlush, params.Arguments)
-	case "gopm_save":
-		result = s.toolCallDaemon(protocol.MethodSave, nil)
 	case "gopm_resurrect":
 		result = s.toolCallDaemon(protocol.MethodResurrect, nil)
 	case "gopm_pid":

@@ -338,6 +338,9 @@ func (d *Daemon) handleStart(params json.RawMessage) protocol.Response {
 	if err != nil {
 		return errorResponse(err.Error())
 	}
+	if err := d.SaveState(); err != nil {
+		slog.Error("auto-save failed after start", "error", err)
+	}
 	return successResponse(proc.Info())
 }
 
@@ -394,6 +397,9 @@ func (d *Daemon) handleStop(params json.RawMessage) protocol.Response {
 		}
 	}
 
+	if err := d.SaveState(); err != nil {
+		slog.Error("auto-save failed after stop", "error", err)
+	}
 	return successResponse(map[string]bool{"success": true})
 }
 
@@ -425,6 +431,9 @@ func (d *Daemon) handleRestart(params json.RawMessage) protocol.Response {
 		results = append(results, p.Info())
 	}
 
+	if err := d.SaveState(); err != nil {
+		slog.Error("auto-save failed after restart", "error", err)
+	}
 	if len(results) == 1 {
 		return successResponse(results[0])
 	}
@@ -451,6 +460,9 @@ func (d *Daemon) handleDelete(params json.RawMessage) protocol.Response {
 		slog.Info("process deleted", "name", p.info.Name)
 	}
 
+	if err := d.SaveState(); err != nil {
+		slog.Error("auto-save failed after delete", "error", err)
+	}
 	return successResponse(map[string]bool{"success": true})
 }
 

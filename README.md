@@ -336,16 +336,9 @@ gopm flush api         # clear logs for api
 gopm flush all         # clear all logs
 ```
 
-### `gopm save`
+### Auto-Persistence
 
-Save the current process list to disk. Used with `resurrect` to survive reboots.
-
-```
-Usage:
-  gopm save
-```
-
-Writes process state to `~/.gopm/dump.json`. When combined with `gopm install`, systemd automatically calls `resurrect` on boot.
+GoPM automatically persists state to `~/.gopm/dump.json` after every mutation (start, stop, restart, delete, process exit). There is no need to manually save — when combined with `gopm install`, systemd automatically calls `resurrect` on boot.
 
 ### `gopm resurrect`
 
@@ -356,7 +349,7 @@ Usage:
   gopm resurrect
 ```
 
-Re-launches all processes that were online when `save` was last called. Processes get new PIDs but retain their original configuration.
+Re-launches all processes that were online at the time of the last state change. Processes get new PIDs but retain their original configuration.
 
 ### `gopm install`
 
@@ -389,7 +382,7 @@ sudo gopm install --user deploy    # run as deploy user
 4. Enables the service (`systemctl enable gopm`)
 5. Starts the service (`systemctl start gopm`)
 
-After installation, `gopm save` + reboot will automatically resurrect all your processes.
+After installation, state is auto-persisted — reboot will automatically resurrect all your processes.
 
 ### `gopm uninstall`
 
@@ -428,7 +421,7 @@ All child processes receive SIGTERM → wait `kill-timeout` → SIGKILL. Daemon 
 
 ### `gopm reboot`
 
-Restart the daemon while preserving all managed processes. The daemon saves state, stops processes, and exits. With systemd installed, the service restarts automatically in ~5 seconds.
+Restart the daemon while preserving all managed processes. The daemon stops processes and exits. State is already persisted automatically. With systemd installed, the service restarts automatically in ~5 seconds.
 
 Without systemd, the reboot will fail with an error (the daemon wouldn't come back). Use `--force` to reboot anyway — the CLI will restart the daemon directly.
 
@@ -512,7 +505,7 @@ Duplicate detection uses the combination of `command` + `cwd` as identifier. If 
 
 ### `gopm suspend`
 
-Save state, stop the daemon, and disable the systemd service so it doesn't restart. Use when you need to take gopm completely offline (maintenance, upgrades, etc.).
+Stop the daemon and disable the systemd service so it doesn't restart. Use when you need to take gopm completely offline (maintenance, upgrades, etc.). State is already auto-persisted.
 
 ```
 Usage:
@@ -522,7 +515,7 @@ Usage:
 Requires systemd installation (`gopm install`). After suspending:
 - All processes are stopped
 - The service won't restart on boot or crash
-- Process list is preserved in `dump.json`
+- Process list is preserved in `dump.json` (auto-saved)
 
 ### `gopm unsuspend`
 
@@ -897,7 +890,7 @@ sudo gopm install --user deploy
 
 This creates a systemd service that:
 - Starts on boot
-- Calls `gopm resurrect` to restore your saved processes
+- Calls `gopm resurrect` to restore your processes (state is auto-persisted)
 - Always restarts the daemon (5-second delay) — used by `gopm reboot`
 - Sets `LimitNOFILE=65536` for high file descriptor limits
 
@@ -907,10 +900,7 @@ This creates a systemd service that:
 # Start your apps
 gopm start ecosystem.json
 
-# Save the process list
-gopm save
-
-# Now they'll survive reboots automatically
+# State is auto-persisted — they'll survive reboots automatically
 sudo reboot
 
 # After reboot — everything is back online
@@ -1020,7 +1010,6 @@ When no config file exists, MCP is enabled by default on `127.0.0.1:18999` (loop
 | `gopm_isrunning` | Check if process is running |
 | `gopm_logs` | Get recent log lines |
 | `gopm_flush` | Clear log files |
-| `gopm_save` | Save process list |
 | `gopm_resurrect` | Restore saved processes |
 | `gopm_pid` | Deep /proc inspection of any PID (Linux only) |
 
@@ -1324,13 +1313,13 @@ gopm/
 │   │   ├── describe.go    # Detailed process info
 │   │   ├── logs.go        # View/follow logs
 │   │   ├── flush.go       # Clear logs
-│   │   ├── save.go        # Save/resurrect process list
+│   │   ├── save.go        # Resurrect process list
 │   │   ├── install.go     # Systemd service install/uninstall
 │   │   ├── ping.go        # Daemon health check
 │   │   ├── kill.go        # Kill daemon
 │   │   ├── config.go      # Show daemon status and resolved configuration
 │   │   ├── newconfig.go   # Export processes / sample config (gopm export)
-│   │   ├── reboot.go      # Daemon reboot (save + exit + restart)
+│   │   ├── reboot.go      # Daemon reboot (exit + restart)
 │   │   ├── suspend.go     # Suspend/unsuspend systemd service
 │   │   ├── pid.go         # Deep /proc process inspection (Linux)
 │   │   ├── pid_stub.go    # Stub for non-Linux platforms

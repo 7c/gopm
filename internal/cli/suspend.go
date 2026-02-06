@@ -5,15 +5,14 @@ import (
 	"os/exec"
 
 	"github.com/7c/gopm/internal/display"
-	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
 )
 
 var suspendCmd = &cobra.Command{
 	Use:   "suspend",
-	Short: "Save state, stop daemon, and disable the systemd service",
-	Long: `Suspend gopm: save the process list, stop the daemon, and disable the
-systemd service so it does not restart automatically.
+	Short: "Stop daemon and disable the systemd service",
+	Long: `Suspend gopm: stop the daemon and disable the systemd service so it
+does not restart automatically. State is persisted automatically.
 
 Use "gopm unsuspend" to re-enable the service and start everything back.`,
 	Args: cobra.NoArgs,
@@ -34,29 +33,15 @@ func runSuspend(cmd *cobra.Command, args []string) {
 		outputError("gopm is not installed as a systemd service (run: sudo gopm install)")
 	}
 
-	// Save state while processes are still online.
-	c, err := tryClient()
-	if err == nil {
-		fmt.Printf("[1/3] %s process list...\n", display.Dim("Saving"))
-		resp, err := c.Send(protocol.MethodSave, nil)
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: save failed: %v\n", err)
-		} else if !resp.Success {
-			fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: save failed: %s\n", resp.Error)
-		}
-		c.Close()
-	} else {
-		fmt.Printf("[1/3] %s\n", display.Dim("Daemon not running, skipping save"))
-	}
-
 	// Stop the systemd service (this also stops the daemon and all processes).
-	fmt.Printf("[2/3] %s gopm service...\n", display.Dim("Stopping"))
+	// State is auto-saved by the daemon on every mutation.
+	fmt.Printf("[1/2] %s gopm service...\n", display.Dim("Stopping"))
 	if out, err := exec.Command("systemctl", "stop", "gopm").CombinedOutput(); err != nil {
 		outputError(fmt.Sprintf("systemctl stop gopm failed: %v\n%s", err, out))
 	}
 
 	// Disable the service so it doesn't start on boot or get auto-restarted.
-	fmt.Printf("[3/3] %s gopm service...\n", display.Dim("Disabling"))
+	fmt.Printf("[2/2] %s gopm service...\n", display.Dim("Disabling"))
 	if out, err := exec.Command("systemctl", "disable", "gopm").CombinedOutput(); err != nil {
 		outputError(fmt.Sprintf("systemctl disable gopm failed: %v\n%s", err, out))
 	}

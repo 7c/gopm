@@ -25,6 +25,7 @@ func (d *Daemon) monitor(p *Process) {
 		p.SetReason("stopped by user")
 		p.LogAction("process stopped (exit code %d)", exitCode)
 		slog.Info("process stopped", "name", p.info.Name, "exit_code", exitCode)
+		d.autoSave("process stopped")
 		return
 	}
 
@@ -35,6 +36,8 @@ func (d *Daemon) monitor(p *Process) {
 
 // handleProcessExit implements the restart logic from the spec.
 func (d *Daemon) handleProcessExit(p *Process, exitCode int) {
+	defer d.autoSave("process exit")
+
 	p.mu.Lock()
 	policy := p.info.RestartPolicy
 	uptime := p.info.Uptime

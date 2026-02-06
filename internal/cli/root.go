@@ -130,7 +130,6 @@ func Execute() {
 	rootCmd.AddCommand(isrunningCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(flushCmd)
-	rootCmd.AddCommand(saveCmd)
 	rootCmd.AddCommand(resurrectCmd)
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(uninstallCmd)

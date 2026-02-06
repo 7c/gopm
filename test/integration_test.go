@@ -190,10 +190,9 @@ func TestSaveAndResurrect(t *testing.T) {
 	env.WaitForStatus("saver1", "online", 5*time.Second)
 	env.WaitForStatus("saver2", "online", 5*time.Second)
 
-	out := env.MustGopm("save")
-	if !strings.Contains(out, "2 processes") {
-		t.Errorf("save output should mention 2 processes: %q", out)
-	}
+	// State is auto-saved after start — no explicit save needed.
+	// Give daemon a moment to persist.
+	time.Sleep(300 * time.Millisecond)
 
 	// Delete all
 	env.MustGopm("delete", "all")
@@ -203,7 +202,7 @@ func TestSaveAndResurrect(t *testing.T) {
 	}
 
 	// Resurrect
-	out = env.MustGopm("resurrect")
+	out := env.MustGopm("resurrect")
 	if !strings.Contains(strings.ToLower(out), "resurrected") {
 		t.Errorf("resurrect output unexpected: %q", out)
 	}
@@ -331,10 +330,7 @@ func TestAutoLoadDumpOnDaemonStart(t *testing.T) {
 	env.WaitForStatus("persist1", "online", 5*time.Second)
 	env.WaitForStatus("persist2", "online", 5*time.Second)
 
-	// Save state
-	env.MustGopm("save")
-
-	// Verify dump.json exists
+	// State is auto-saved after start — verify dump.json exists
 	dumpPath := filepath.Join(env.Home, "dump.json")
 	if _, err := os.Stat(dumpPath); os.IsNotExist(err) {
 		t.Fatal("dump.json not created after save")
@@ -715,9 +711,8 @@ func TestRebootQuickExit(t *testing.T) {
 
 	env.MustGopm("start", env.TestappBin, "--name", "stable", "--", "--run-forever")
 	env.WaitForStatus("stable", "online", 5*time.Second)
-	env.MustGopm("save")
 
-	// Reboot
+	// Reboot (state is auto-saved)
 	env.MustGopm("reboot")
 	time.Sleep(2 * time.Second)
 

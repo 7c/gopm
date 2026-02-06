@@ -67,8 +67,6 @@ func (m *mockDaemon) HandleRequest(req protocol.Request) protocol.Response {
 		return protocol.Response{Error: "process not found"}
 	case "stop", "restart", "delete", "flush":
 		return protocol.Response{Success: true, Data: json.RawMessage(`{"status":"ok"}`)}
-	case "save":
-		return protocol.Response{Success: true, Data: json.RawMessage(`{"saved":2}`)}
 	case "resurrect":
 		return protocol.Response{Success: true, Data: json.RawMessage(`[]`)}
 	case "start":
@@ -393,19 +391,6 @@ func TestMCP_ToolCall_Stop(t *testing.T) {
 	rpcResp := postJSONRPC(t, ts.URL, "tools/call", map[string]interface{}{
 		"name":      "gopm_stop",
 		"arguments": map[string]interface{}{"target": "api"},
-	})
-	if rpcResp.Error != nil {
-		t.Fatalf("unexpected error: %s", rpcResp.Error.Message)
-	}
-}
-
-func TestMCP_ToolCall_Save(t *testing.T) {
-	_, ts := newTestServer()
-	defer ts.Close()
-
-	rpcResp := postJSONRPC(t, ts.URL, "tools/call", map[string]interface{}{
-		"name":      "gopm_save",
-		"arguments": map[string]interface{}{},
 	})
 	if rpcResp.Error != nil {
 		t.Fatalf("unexpected error: %s", rpcResp.Error.Message)

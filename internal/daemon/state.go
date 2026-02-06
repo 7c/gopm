@@ -9,6 +9,13 @@ import (
 	"github.com/7c/gopm/internal/protocol"
 )
 
+// autoSave is a convenience wrapper that logs errors from SaveState.
+func (d *Daemon) autoSave(reason string) {
+	if err := d.SaveState(); err != nil {
+		slog.Error("auto-save failed", "reason", reason, "error", err)
+	}
+}
+
 // SaveState persists the current process table to dump.json.
 func (d *Daemon) SaveState() error {
 	d.mu.RLock()

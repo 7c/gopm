@@ -114,14 +114,6 @@ func toolDefs() []toolDef {
 			},
 		},
 		{
-			Name:        "gopm_save",
-			Description: "Save process list for later resurrection",
-			InputSchema: map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			},
-		},
-		{
 			Name:        "gopm_resurrect",
 			Description: "Restore previously saved processes",
 			InputSchema: map[string]interface{}{
