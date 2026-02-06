@@ -1011,6 +1011,8 @@ When no config file exists, MCP is enabled by default on `127.0.0.1:18999` (loop
 | `gopm_logs` | Get recent log lines |
 | `gopm_flush` | Clear log files |
 | `gopm_resurrect` | Restore saved processes |
+| `gopm_export` | Export processes as ecosystem JSON config |
+| `gopm_import` | Import processes from ecosystem JSON (skips duplicates) |
 | `gopm_pid` | Deep /proc inspection of any PID (Linux only) |
 
 ### Exposed resources
@@ -1034,6 +1036,10 @@ You: "The API keeps crashing, show me the last 100 lines of stderr"
 
 You: "Who started process 4521? Show me the chain"
 → Claude calls gopm_pid(pid=4521, sections=["tree"]) → process ancestry
+
+You: "Export all my processes and set them up on the staging server"
+→ Claude calls gopm_export(target="all") → ecosystem JSON config
+→ Claude calls gopm_import(apps=[...]) on staging → processes started
 ```
 
 ---

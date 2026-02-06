@@ -137,6 +137,46 @@ func toolDefs() []toolDef {
 				"required": []string{"pid"},
 			},
 		},
+		{
+			Name:        "gopm_export",
+			Description: "Export processes as an ecosystem JSON config. Use to backup, migrate, or inspect process configurations.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"target": map[string]interface{}{"type": "string", "description": "Process name, ID, or 'all' (default: all)"},
+					"full":   map[string]interface{}{"type": "boolean", "description": "Include all configurable settings even if they match defaults"},
+				},
+			},
+		},
+		{
+			Name:        "gopm_import",
+			Description: "Import processes from an ecosystem JSON config. Starts each app, skipping duplicates (matched by command + cwd).",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"apps": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"name":          map[string]interface{}{"type": "string", "description": "Process name"},
+								"command":       map[string]interface{}{"type": "string", "description": "Path to the script or binary"},
+								"args":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Arguments"},
+								"cwd":           map[string]interface{}{"type": "string", "description": "Working directory"},
+								"interpreter":   map[string]interface{}{"type": "string", "description": "Interpreter (e.g. node, python3)"},
+								"env":           map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Environment variables"},
+								"autorestart":   map[string]interface{}{"type": "string", "enum": []string{"always", "on-failure", "never"}},
+								"max_restarts":  map[string]interface{}{"type": "integer"},
+								"restart_delay": map[string]interface{}{"type": "string"},
+							},
+							"required": []string{"name", "command"},
+						},
+						"description": "Array of app configs to import",
+					},
+				},
+				"required": []string{"apps"},
+			},
+		},
 	}
 }
 

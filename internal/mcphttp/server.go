@@ -230,6 +230,10 @@ func (s *Server) handleToolsCall(req *jsonRPCRequest) *jsonRPCResponse {
 		result = s.toolCallDaemon(protocol.MethodResurrect, nil)
 	case "gopm_pid":
 		result = s.toolPid(params.Arguments)
+	case "gopm_export":
+		result = s.toolExport(params.Arguments)
+	case "gopm_import":
+		result = s.toolImport(params.Arguments)
 	default:
 		return &jsonRPCResponse{
 			JSONRPC: "2.0",
@@ -323,6 +327,230 @@ func (s *Server) toolLogs(args json.RawMessage) interface{} {
 		return mcpContent(string(resp.Data))
 	}
 	return mcpContent(result.Content)
+}
+
+// toolExport returns the process list as an ecosystem JSON config.
+func (s *Server) toolExport(args json.RawMessage) interface{} {
+	var p struct {
+		Target string `json:"target"`
+		Full   bool   `json:"full"`
+	}
+	if args != nil {
+		json.Unmarshal(args, &p)
+	}
+	if p.Target == "" {
+		p.Target = "all"
+	}
+
+	// Get process list from daemon.
+	resp := s.daemon.HandleRequest(protocol.Request{Method: protocol.MethodList})
+	if !resp.Success {
+		return mcpError(resp.Error)
+	}
+
+	var procs []protocol.ProcessInfo
+	if err := json.Unmarshal(resp.Data, &procs); err != nil {
+		return mcpError(fmt.Sprintf("failed to parse process list: %v", err))
+	}
+	if len(procs) == 0 {
+		return mcpError("no processes defined")
+	}
+
+	// Filter by target.
+	var selected []protocol.ProcessInfo
+	if p.Target == "all" {
+		selected = procs
+	} else {
+		for _, proc := range procs {
+			if proc.Name == p.Target || fmt.Sprintf("%d", proc.ID) == p.Target {
+				selected = append(selected, proc)
+			}
+		}
+		if len(selected) == 0 {
+			return mcpError(fmt.Sprintf("process %q not found", p.Target))
+		}
+	}
+
+	// Convert to ecosystem format.
+	type appConfig struct {
+		Name         string            `json:"name"`
+		Command      string            `json:"command"`
+		Args         []string          `json:"args,omitempty"`
+		Cwd          string            `json:"cwd,omitempty"`
+		Interpreter  string            `json:"interpreter,omitempty"`
+		Env          map[string]string `json:"env,omitempty"`
+		AutoRestart  string            `json:"autorestart,omitempty"`
+		MaxRestarts  *int              `json:"max_restarts,omitempty"`
+		MinUptime    string            `json:"min_uptime,omitempty"`
+		RestartDelay string            `json:"restart_delay,omitempty"`
+		ExpBackoff   bool              `json:"exp_backoff,omitempty"`
+		MaxDelay     string            `json:"max_delay,omitempty"`
+		KillTimeout  string            `json:"kill_timeout,omitempty"`
+		LogOut       string            `json:"log_out,omitempty"`
+		LogErr       string            `json:"log_err,omitempty"`
+		MaxLogSize   string            `json:"max_log_size,omitempty"`
+	}
+	defaults := protocol.DefaultRestartPolicy()
+
+	apps := make([]appConfig, 0, len(selected))
+	for _, proc := range selected {
+		app := appConfig{
+			Name:    proc.Name,
+			Command: proc.Command,
+		}
+		if len(proc.Args) > 0 {
+			app.Args = proc.Args
+		}
+		if proc.Cwd != "" {
+			app.Cwd = proc.Cwd
+		}
+		if proc.Interpreter != "" {
+			app.Interpreter = proc.Interpreter
+		}
+		if len(proc.Env) > 0 {
+			app.Env = proc.Env
+		}
+
+		rp := proc.RestartPolicy
+		if p.Full || rp.AutoRestart != defaults.AutoRestart {
+			app.AutoRestart = string(rp.AutoRestart)
+		}
+		if p.Full || rp.MaxRestarts != defaults.MaxRestarts {
+			mr := rp.MaxRestarts
+			app.MaxRestarts = &mr
+		}
+		if p.Full || rp.MinUptime.Duration != defaults.MinUptime.Duration {
+			app.MinUptime = rp.MinUptime.Duration.String()
+		}
+		if p.Full || rp.RestartDelay.Duration != defaults.RestartDelay.Duration {
+			app.RestartDelay = rp.RestartDelay.Duration.String()
+		}
+		if p.Full || rp.ExpBackoff != defaults.ExpBackoff {
+			app.ExpBackoff = rp.ExpBackoff
+		}
+		if p.Full || rp.MaxDelay.Duration != defaults.MaxDelay.Duration {
+			app.MaxDelay = rp.MaxDelay.Duration.String()
+		}
+		if p.Full || rp.KillTimeout.Duration != defaults.KillTimeout.Duration {
+			app.KillTimeout = rp.KillTimeout.Duration.String()
+		}
+		if p.Full {
+			if proc.LogOut != "" {
+				app.LogOut = proc.LogOut
+			}
+			if proc.LogErr != "" {
+				app.LogErr = proc.LogErr
+			}
+			if proc.MaxLogSize > 0 {
+				app.MaxLogSize = protocol.FormatSize(proc.MaxLogSize)
+			}
+		}
+		apps = append(apps, app)
+	}
+
+	eco := map[string]interface{}{"apps": apps}
+	data, _ := json.MarshalIndent(eco, "", "  ")
+	return mcpContent(string(data))
+}
+
+// toolImport accepts an ecosystem JSON config and starts processes (skipping duplicates).
+func (s *Server) toolImport(args json.RawMessage) interface{} {
+	var p struct {
+		Apps []struct {
+			Name         string            `json:"name"`
+			Command      string            `json:"command"`
+			Args         []string          `json:"args,omitempty"`
+			Cwd          string            `json:"cwd,omitempty"`
+			Interpreter  string            `json:"interpreter,omitempty"`
+			Env          map[string]string `json:"env,omitempty"`
+			AutoRestart  string            `json:"autorestart,omitempty"`
+			MaxRestarts  *int              `json:"max_restarts,omitempty"`
+			MinUptime    string            `json:"min_uptime,omitempty"`
+			RestartDelay string            `json:"restart_delay,omitempty"`
+			ExpBackoff   bool              `json:"exp_backoff,omitempty"`
+			MaxDelay     string            `json:"max_delay,omitempty"`
+			KillTimeout  string            `json:"kill_timeout,omitempty"`
+			LogOut       string            `json:"log_out,omitempty"`
+			LogErr       string            `json:"log_err,omitempty"`
+			MaxLogSize   string            `json:"max_log_size,omitempty"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return mcpError(fmt.Sprintf("invalid import params: %v", err))
+	}
+	if len(p.Apps) == 0 {
+		return mcpError("apps array is required and must not be empty")
+	}
+
+	// Get existing processes for duplicate detection.
+	resp := s.daemon.HandleRequest(protocol.Request{Method: protocol.MethodList})
+	if !resp.Success {
+		return mcpError(resp.Error)
+	}
+	var existing []protocol.ProcessInfo
+	if err := json.Unmarshal(resp.Data, &existing); err != nil {
+		return mcpError(fmt.Sprintf("failed to parse process list: %v", err))
+	}
+
+	type key struct{ cwd, command string }
+	existingSet := make(map[key]string)
+	for _, proc := range existing {
+		existingSet[key{proc.Cwd, proc.Command}] = proc.Name
+	}
+
+	var lines []string
+	imported, skipped := 0, 0
+	for _, app := range p.Apps {
+		if app.Command == "" {
+			lines = append(lines, fmt.Sprintf("SKIP %s: command is required", app.Name))
+			skipped++
+			continue
+		}
+
+		if name, exists := existingSet[key{app.Cwd, app.Command}]; exists {
+			lines = append(lines, fmt.Sprintf("SKIP %s (matches existing %q)", app.Name, name))
+			skipped++
+			continue
+		}
+
+		params := protocol.StartParams{
+			Command:      app.Command,
+			Name:         app.Name,
+			Args:         app.Args,
+			Cwd:          app.Cwd,
+			Interpreter:  app.Interpreter,
+			Env:          app.Env,
+			AutoRestart:  app.AutoRestart,
+			MaxRestarts:  app.MaxRestarts,
+			MinUptime:    app.MinUptime,
+			RestartDelay: app.RestartDelay,
+			ExpBackoff:   app.ExpBackoff,
+			MaxDelay:     app.MaxDelay,
+			KillTimeout:  app.KillTimeout,
+			LogOut:       app.LogOut,
+			LogErr:       app.LogErr,
+			MaxLogSize:   app.MaxLogSize,
+		}
+		raw, _ := json.Marshal(params)
+		startResp := s.daemon.HandleRequest(protocol.Request{Method: protocol.MethodStart, Params: raw})
+		if !startResp.Success {
+			lines = append(lines, fmt.Sprintf("FAIL %s: %s", app.Name, startResp.Error))
+			continue
+		}
+
+		var info protocol.ProcessInfo
+		if err := json.Unmarshal(startResp.Data, &info); err == nil {
+			lines = append(lines, fmt.Sprintf("OK %s (PID: %d)", info.Name, info.PID))
+		}
+		imported++
+	}
+
+	summary := fmt.Sprintf("Imported %d/%d processes", imported, len(p.Apps))
+	if skipped > 0 {
+		summary += fmt.Sprintf(" (%d skipped)", skipped)
+	}
+	lines = append(lines, "", summary)
+	return mcpContent(strings.Join(lines, "\n"))
 }
 
 // --- Resources ---

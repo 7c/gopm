@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -394,6 +395,100 @@ func TestMCP_ToolCall_Stop(t *testing.T) {
 	})
 	if rpcResp.Error != nil {
 		t.Fatalf("unexpected error: %s", rpcResp.Error.Message)
+	}
+}
+
+func TestMCP_ToolCall_Export(t *testing.T) {
+	_, ts := newTestServer()
+	defer ts.Close()
+
+	rpcResp := postJSONRPC(t, ts.URL, "tools/call", map[string]interface{}{
+		"name":      "gopm_export",
+		"arguments": map[string]interface{}{"target": "all"},
+	})
+	if rpcResp.Error != nil {
+		t.Fatalf("unexpected error: %s", rpcResp.Error.Message)
+	}
+
+	result := rpcResp.Result.(map[string]interface{})
+	content := result["content"].([]interface{})
+	text := content[0].(map[string]interface{})["text"].(string)
+	if !strings.Contains(text, "api") || !strings.Contains(text, "worker") {
+		t.Errorf("export should contain both processes, got: %s", text)
+	}
+	if !strings.Contains(text, `"apps"`) {
+		t.Errorf("export should contain apps key, got: %s", text)
+	}
+}
+
+func TestMCP_ToolCall_ExportSingle(t *testing.T) {
+	_, ts := newTestServer()
+	defer ts.Close()
+
+	rpcResp := postJSONRPC(t, ts.URL, "tools/call", map[string]interface{}{
+		"name":      "gopm_export",
+		"arguments": map[string]interface{}{"target": "api"},
+	})
+	if rpcResp.Error != nil {
+		t.Fatalf("unexpected error: %s", rpcResp.Error.Message)
+	}
+
+	result := rpcResp.Result.(map[string]interface{})
+	content := result["content"].([]interface{})
+	text := content[0].(map[string]interface{})["text"].(string)
+	if !strings.Contains(text, "api") {
+		t.Errorf("export should contain api, got: %s", text)
+	}
+	if strings.Contains(text, "worker") {
+		t.Errorf("single export should not contain worker, got: %s", text)
+	}
+}
+
+func TestMCP_ToolCall_Import(t *testing.T) {
+	_, ts := newTestServer()
+	defer ts.Close()
+
+	rpcResp := postJSONRPC(t, ts.URL, "tools/call", map[string]interface{}{
+		"name": "gopm_import",
+		"arguments": map[string]interface{}{
+			"apps": []map[string]interface{}{
+				{"name": "newapp", "command": "/usr/bin/newapp", "cwd": "/opt/new"},
+			},
+		},
+	})
+	if rpcResp.Error != nil {
+		t.Fatalf("unexpected error: %s", rpcResp.Error.Message)
+	}
+
+	result := rpcResp.Result.(map[string]interface{})
+	content := result["content"].([]interface{})
+	text := content[0].(map[string]interface{})["text"].(string)
+	if !strings.Contains(text, "OK") {
+		t.Errorf("import should report OK, got: %s", text)
+	}
+	if !strings.Contains(text, "Imported 1/1") {
+		t.Errorf("import should report 1/1 imported, got: %s", text)
+	}
+}
+
+func TestMCP_ToolCall_ImportEmpty(t *testing.T) {
+	_, ts := newTestServer()
+	defer ts.Close()
+
+	rpcResp := postJSONRPC(t, ts.URL, "tools/call", map[string]interface{}{
+		"name": "gopm_import",
+		"arguments": map[string]interface{}{
+			"apps": []map[string]interface{}{},
+		},
+	})
+	if rpcResp.Error != nil {
+		t.Fatalf("unexpected error: %s", rpcResp.Error.Message)
+	}
+
+	result := rpcResp.Result.(map[string]interface{})
+	isError, _ := result["isError"].(bool)
+	if !isError {
+		t.Error("expected error for empty apps array")
 	}
 }
 
