@@ -31,6 +31,6 @@ make || { echo "Build failed, aborting release" >&2; git checkout "$FILE"; exit 
 
 git add version.txt
 git commit -m "Bump version to $NEWVERSION"
-git tag -a "v${NEWVERSION}" -m "Release v${NEWVERSION}"
+git tag -a "${NEWVERSION}" -m "Release v${NEWVERSION}"
 git push origin main
-git push origin "v${NEWVERSION}"
+git push origin "${NEWVERSION}"
