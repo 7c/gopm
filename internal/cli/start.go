@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -138,6 +139,13 @@ func startEcosystem(path string) {
 
 // startSingle starts a single process from CLI flags.
 func startSingle(command string, childArgs []string) {
+	// Always resolve CWD on the CLI side. The daemon's own cwd is
+	// meaningless to the user; we need the directory the CLI was invoked from.
+	cwd := startCwd
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+
 	// Resolve command to absolute path.
 	if !filepath.IsAbs(command) {
 		if strings.Contains(command, "/") {
@@ -146,9 +154,12 @@ func startSingle(command string, childArgs []string) {
 				command = abs
 			}
 		} else {
-			// Bare command name - look up in PATH.
+			// Bare command name - look up in PATH first.
 			if abs, err := exec.LookPath(command); err == nil {
 				command = abs
+			} else {
+				// Not in PATH — resolve relative to CWD (e.g. "app.js" with --interpreter).
+				command = filepath.Join(cwd, command)
 			}
 		}
 	}
@@ -157,7 +168,7 @@ func startSingle(command string, childArgs []string) {
 		Command:      command,
 		Name:         startName,
 		Args:         childArgs,
-		Cwd:          startCwd,
+		Cwd:          cwd,
 		Interpreter:  startInterpreter,
 		AutoRestart:  startAutoRestart,
 		ExpBackoff:   startExpBackoff,

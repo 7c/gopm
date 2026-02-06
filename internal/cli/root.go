@@ -132,6 +132,7 @@ func Execute() {
 	rootCmd.AddCommand(guiCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(exportCmd)
+	rootCmd.AddCommand(importCmd)
 	rootCmd.AddCommand(suspendCmd)
 	rootCmd.AddCommand(unsuspendCmd)
 	rootCmd.AddCommand(pidCmd)
