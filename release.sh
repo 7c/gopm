@@ -33,4 +33,6 @@ git add version.txt
 git commit -m "Bump version to $NEWVERSION"
 git tag -a "${NEWVERSION}" -m "Release v${NEWVERSION}"
 git push origin main
+git push github main
 git push origin "${NEWVERSION}"
+git push github "${NEWVERSION}"
