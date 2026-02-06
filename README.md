@@ -427,20 +427,34 @@ Flags:
   -f, --force    Force reboot even without systemd installed
 ```
 
-### `gopm config`
+### `gopm export`
 
-Print a complete `gopm.config.json` with all available options and their defaults. Redirect to a file to bootstrap your config.
+Export running processes as an ecosystem JSON file, or print a sample `gopm.config.json`.
 
 ```
 Usage:
-  gopm config
+  gopm export [all|name|id...] [flags]
+
+Flags:
+  -n, --new    Print sample gopm.config.json with all defaults
 ```
 
-**Examples:**
+**Export processes:**
 
 ```bash
-gopm config                                # print to stdout
-gopm config > ~/.gopm/gopm.config.json     # bootstrap config
+gopm export all                            # export all processes as ecosystem JSON
+gopm export api                            # export single process by name
+gopm export 0 1 2                          # export multiple processes by ID
+gopm export api worker                     # export multiple by name
+gopm export all > ecosystem.json           # save and re-launch later
+gopm start ecosystem.json
+```
+
+**Sample config:**
+
+```bash
+gopm export --new                          # print sample gopm.config.json
+gopm export -n > ~/.gopm/gopm.config.json  # bootstrap config
 ```
 
 ### `gopm suspend`
@@ -900,7 +914,7 @@ GoPM uses an optional JSON config file (`gopm.config.json`) for daemon settings.
 }
 ```
 
-Generate a complete config with all defaults: `gopm config > ~/.gopm/gopm.config.json`
+Generate a complete config with all defaults: `gopm export -n > ~/.gopm/gopm.config.json`
 
 The `mcpserver.device` list accepts IP addresses, interface names (e.g. `"tailscale0"`), or `"localhost"`. An empty list binds to localhost (`127.0.0.1`) only.
 
@@ -1173,7 +1187,7 @@ gopm/
 │   │   ├── ping.go        # Daemon health check
 │   │   ├── kill.go        # Kill daemon
 │   │   ├── config.go      # Show daemon status and resolved configuration
-│   │   ├── newconfig.go   # Print sample config with defaults (gopm config)
+│   │   ├── newconfig.go   # Export processes / sample config (gopm export)
 │   │   ├── reboot.go      # Daemon reboot (save + exit + restart)
 │   │   ├── suspend.go     # Suspend/unsuspend systemd service
 │   │   ├── pid.go         # Deep /proc process inspection (Linux)
