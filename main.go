@@ -1,18 +1,22 @@
 package main
 
 import (
-	"runtime/debug"
+	_ "embed"
+	"strings"
 
 	"github.com/7c/gopm/internal/cli"
 )
 
-// Version is set via ldflags at build time.
+// Version is set via ldflags at build time, or falls back to embedded version.txt.
 var Version = "dev"
+
+//go:embed version.txt
+var embeddedVersion string
 
 func main() {
 	if Version == "dev" {
-		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-			Version = info.Main.Version
+		if v := strings.TrimSpace(embeddedVersion); v != "" {
+			Version = v
 		}
 	}
 	cli.Version = Version
