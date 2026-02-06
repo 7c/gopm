@@ -132,8 +132,8 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 				uptime = rawUptime
 			}
 			if len(p.Listeners) > 0 {
-				rawPorts = formatPorts(p.Listeners)
-				ports = rawPorts
+				rawPorts = formatListenerAddrs(p.Listeners)
+				ports = formatListenerAddrsColored(p.Listeners)
 			}
 		}
 		rawStatus := string(p.Status)
@@ -170,27 +170,63 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo) {
 	tbl.Render(w)
 }
 
-// formatPorts extracts port numbers from listener addresses for compact display.
-func formatPorts(listeners []string) string {
-	var ports []string
+// extractListenerAddr strips the "proto@" prefix from a listener string,
+// returning just "ip:port".
+func extractListenerAddr(l string) string {
+	if idx := strings.Index(l, "@"); idx >= 0 {
+		return l[idx+1:]
+	}
+	return l
+}
+
+// isLocalAddr returns true if the address is a loopback/localhost bind.
+func isLocalAddr(addr string) bool {
+	// addr is "ip:port" — extract the IP part
+	host := addr
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		host = addr[:idx]
+	}
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+}
+
+// formatListenerAddrs returns listener addresses as "ip:port, ip:port" (raw, no color).
+func formatListenerAddrs(listeners []string) string {
+	var addrs []string
 	seen := make(map[string]bool)
 	for _, l := range listeners {
-		// Format: "proto@addr:port"
-		idx := strings.LastIndex(l, ":")
-		if idx < 0 {
+		addr := extractListenerAddr(l)
+		if addr == "" || seen[addr] {
 			continue
 		}
-		port := l[idx+1:]
-		if port == "0" || seen[port] {
-			continue
-		}
-		seen[port] = true
-		ports = append(ports, port)
+		seen[addr] = true
+		addrs = append(addrs, addr)
 	}
-	if len(ports) == 0 {
+	if len(addrs) == 0 {
 		return "-"
 	}
-	return strings.Join(ports, ", ")
+	return strings.Join(addrs, ", ")
+}
+
+// formatListenerAddrsColored returns listener addresses with non-local ones in red.
+func formatListenerAddrsColored(listeners []string) string {
+	var parts []string
+	seen := make(map[string]bool)
+	for _, l := range listeners {
+		addr := extractListenerAddr(l)
+		if addr == "" || seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		if isLocalAddr(addr) {
+			parts = append(parts, addr)
+		} else {
+			parts = append(parts, Red(addr))
+		}
+	}
+	if len(parts) == 0 {
+		return Dim("-")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // RenderDescribe renders the describe output as a key-value table with colored status.
