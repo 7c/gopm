@@ -482,19 +482,20 @@ gopm export -n > ~/.gopm/gopm.config.json  # bootstrap config
 
 ### `gopm import`
 
-Import processes from an ecosystem JSON file. Processes that already exist (matched by command + working directory) are skipped.
+Import processes from one or more JSON files. Processes that already exist (matched by command + working directory) are skipped.
 
 ```
 Usage:
-  gopm import <ecosystem.json>
+  gopm import <gopm.process> [more files...]
 ```
 
 **Examples:**
 
 ```bash
-gopm import ecosystem.json               # import all apps from file
-gopm export all > backup.json            # backup current processes
-gopm import backup.json                  # restore (skips duplicates)
+gopm import gopm.process                 # import from single file
+gopm import app1.json app2.json          # import from multiple files
+gopm export all > gopm.process           # backup current processes
+gopm import gopm.process                 # restore (skips duplicates)
 ```
 
 **Output:**

@@ -12,25 +12,33 @@ import (
 )
 
 var importCmd = &cobra.Command{
-	Use:   "import <ecosystem.json>",
-	Short: "Import processes from an ecosystem JSON file",
-	Long: `Import processes from an ecosystem JSON file. Processes that already exist
-(matched by command + working directory) are skipped with a warning.
+	Use:   "import <gopm.process> [more files...]",
+	Short: "Import processes from one or more JSON files",
+	Long: `Import processes from one or more ecosystem JSON files. Processes that already
+exist (matched by command + working directory) are skipped with a warning.
 
 This is useful for merging exported configs without creating duplicates:
 
-  gopm export all > backup.json
-  gopm import backup.json`,
-	Args: cobra.ExactArgs(1),
+  gopm export all > gopm.process
+  gopm import gopm.process
+  gopm import app1.json app2.json`,
+	Args: cobra.MinimumNArgs(1),
 	Run:  runImport,
 }
 
 func runImport(cmd *cobra.Command, args []string) {
-	path := args[0]
-
-	eco, err := config.LoadEcosystem(path)
-	if err != nil {
-		exitError(fmt.Sprintf("failed to load ecosystem config: %v", err))
+	// Load all files, warn on bad ones but continue with the rest.
+	var allApps []config.AppConfig
+	for _, path := range args {
+		eco, err := config.LoadEcosystem(path)
+		if err != nil {
+			fmt.Printf("%s %s: %v\n", display.Red("WARN"), display.Bold(path), err)
+			continue
+		}
+		allApps = append(allApps, eco.Apps...)
+	}
+	if len(allApps) == 0 {
+		exitError("no valid apps found in any input file")
 	}
 
 	c, err := newClient()
@@ -62,7 +70,7 @@ func runImport(cmd *cobra.Command, args []string) {
 
 	imported := 0
 	skipped := 0
-	for _, app := range eco.Apps {
+	for _, app := range allApps {
 		// Resolve cwd for comparison — empty means current dir (same as daemon default).
 		cwd := app.Cwd
 		if cwd == "" {
@@ -103,7 +111,7 @@ func runImport(cmd *cobra.Command, args []string) {
 		imported++
 	}
 
-	fmt.Printf("\nImported %d/%d processes", imported, len(eco.Apps))
+	fmt.Printf("\nImported %d/%d processes", imported, len(allApps))
 	if skipped > 0 {
 		fmt.Printf(" (%d skipped)", skipped)
 	}
