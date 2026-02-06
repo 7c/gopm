@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -18,7 +17,7 @@ var isrunningCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		target := args[0]
 
-		c, err := client.NewWithConfig(configFlag)
+		c, err := newClient()
 		if err != nil {
 			outputError(err.Error())
 		}

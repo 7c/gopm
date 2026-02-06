@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -36,7 +35,7 @@ func runSuspend(cmd *cobra.Command, args []string) {
 	}
 
 	// Save state while processes are still online.
-	c, err := client.TryConnect(configFlag)
+	c, err := tryClient()
 	if err == nil {
 		fmt.Printf("[1/3] %s process list...\n", display.Dim("Saving"))
 		resp, err := c.Send(protocol.MethodSave, nil)

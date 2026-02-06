@@ -22,6 +22,7 @@ type Client struct {
 	scanner    *bufio.Scanner
 	home       string
 	configFlag string
+	Debug      bool
 }
 
 // New creates a new Client, auto-starting the daemon if necessary.
@@ -38,6 +39,14 @@ func NewWithConfig(configFlag string) (*Client, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// SetDebug enables debug logging on the client.
+func (c *Client) SetDebug(enabled bool) {
+	c.Debug = enabled
+	if enabled {
+		fmt.Fprintf(os.Stderr, "[debug] connected to %s\n", filepath.Join(c.home, "gopm.sock"))
+	}
 }
 
 // Send sends a request to the daemon and returns the response.
@@ -61,8 +70,15 @@ func (c *Client) Send(method string, params interface{}) (*protocol.Response, er
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	if c.Debug {
+		fmt.Fprintf(os.Stderr, "[debug] → %s %s\n", method, string(data))
+	}
+
 	// Write request followed by newline
 	if _, err := fmt.Fprintf(c.conn, "%s\n", data); err != nil {
+		if c.Debug {
+			fmt.Fprintf(os.Stderr, "[debug] send error: %v\n", err)
+		}
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 
@@ -73,9 +89,24 @@ func (c *Client) Send(method string, params interface{}) (*protocol.Response, er
 	}
 	if !c.scanner.Scan() {
 		if err := c.scanner.Err(); err != nil {
+			if c.Debug {
+				fmt.Fprintf(os.Stderr, "[debug] read error: %v\n", err)
+			}
 			return nil, fmt.Errorf("read response: %w", err)
 		}
+		if c.Debug {
+			fmt.Fprintf(os.Stderr, "[debug] connection closed by daemon\n")
+		}
 		return nil, fmt.Errorf("connection closed")
+	}
+
+	if c.Debug {
+		raw := c.scanner.Text()
+		if len(raw) > 200 {
+			fmt.Fprintf(os.Stderr, "[debug] ← %s...(truncated %d bytes)\n", raw[:200], len(raw))
+		} else {
+			fmt.Fprintf(os.Stderr, "[debug] ← %s\n", raw)
+		}
 	}
 
 	var resp protocol.Response
@@ -184,6 +215,9 @@ func (c *Client) startDaemon() error {
 	args := []string{"--daemon"}
 	if c.configFlag != "" {
 		args = append(args, "--config", c.configFlag)
+	}
+	if c.Debug {
+		args = append(args, "--debug")
 	}
 	cmd := exec.Command(self, args...)
 	cmd.Env = os.Environ()

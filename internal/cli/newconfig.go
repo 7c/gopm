@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/config"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -92,7 +91,7 @@ func runExport(cmd *cobra.Command, args []string) {
 	}
 
 	// Connect to daemon and get process list.
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		outputError(err.Error())
 	}

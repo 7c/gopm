@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -25,7 +24,7 @@ var resurrectCmd = &cobra.Command{
 }
 
 func runSave(cmd *cobra.Command, args []string) {
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}
@@ -51,7 +50,7 @@ func runSave(cmd *cobra.Command, args []string) {
 }
 
 func runResurrect(cmd *cobra.Command, args []string) {
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

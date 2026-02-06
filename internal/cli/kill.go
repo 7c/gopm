@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +13,7 @@ var killCmd = &cobra.Command{
 	Short: "Kill the daemon",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		c, err := client.NewWithConfig(configFlag)
+		c, err := newClient()
 		if err != nil {
 			if jsonOutput {
 				outputError("gopm daemon is not running")

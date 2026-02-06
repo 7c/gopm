@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -16,7 +15,7 @@ var pingCmd = &cobra.Command{
 	Short: "Check if daemon is running",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		c, err := client.NewWithConfig(configFlag)
+		c, err := newClient()
 		if err != nil {
 			if jsonOutput {
 				outputError("gopm daemon is not running")

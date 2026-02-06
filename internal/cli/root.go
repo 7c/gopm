@@ -21,6 +21,9 @@ var Version = "dev"
 // jsonOutput is the global flag for JSON output mode.
 var jsonOutput bool
 
+// debugOutput is the global flag for debug logging.
+var debugOutput bool
+
 var rootCmd = &cobra.Command{
 	Use:   "gopm",
 	Short: display.CBold + "GoPM" + display.CReset + " — Lightweight Process Manager",
@@ -92,22 +95,27 @@ func runRoot(cmd *cobra.Command, args []string) {
 func Execute() {
 	// Check for --daemon flag before cobra parses anything.
 	isDaemon := false
+	daemonDebug := false
 	daemonConfigFlag := ""
 	for i, arg := range os.Args[1:] {
 		if arg == "--daemon" {
 			isDaemon = true
+		}
+		if arg == "--debug" {
+			daemonDebug = true
 		}
 		if arg == "--config" && i+1 < len(os.Args[1:]) {
 			daemonConfigFlag = os.Args[i+2]
 		}
 	}
 	if isDaemon {
-		daemon.Run(Version, daemonConfigFlag)
+		daemon.Run(Version, daemonConfigFlag, daemonDebug)
 		return // never reached; daemon.Run calls os.Exit
 	}
 
 	rootCmd.Version = Version
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
+	rootCmd.PersistentFlags().BoolVar(&debugOutput, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().StringVar(&configFlag, "config", "", "path to gopm.config.json")
 
 	// Apply colored help template globally.
@@ -141,6 +149,37 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// debugLog prints a debug message to stderr when --debug is enabled.
+func debugLog(format string, args ...interface{}) {
+	if debugOutput {
+		fmt.Fprintf(os.Stderr, "[debug] "+format+"\n", args...)
+	}
+}
+
+// newClient creates a client with the global config and debug flags applied.
+func newClient() (*client.Client, error) {
+	c, err := client.NewWithConfig(configFlag)
+	if err != nil {
+		return nil, err
+	}
+	if debugOutput {
+		c.SetDebug(true)
+	}
+	return c, nil
+}
+
+// tryClient connects to an existing daemon (no auto-start) with debug flags.
+func tryClient() (*client.Client, error) {
+	c, err := client.TryConnect(configFlag)
+	if err != nil {
+		return nil, err
+	}
+	if debugOutput {
+		c.SetDebug(true)
+	}
+	return c, nil
 }
 
 // exitError prints an error message and exits. When jsonOutput is set, it

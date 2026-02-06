@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/config"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
@@ -34,7 +33,7 @@ func runImport(cmd *cobra.Command, args []string) {
 		exitError(fmt.Sprintf("failed to load ecosystem config: %v", err))
 	}
 
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		exitError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

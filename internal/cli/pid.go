@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/procinspect"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -93,7 +92,7 @@ func init() {
 
 // getGoPMInfo tries to connect to an existing daemon and check if the PID is managed.
 func getGoPMInfo(pid int) *procinspect.GoPMInfo {
-	c, err := client.TryConnect(configFlag)
+	c, err := tryClient()
 	if err != nil {
 		return &procinspect.GoPMInfo{DaemonUp: false}
 	}

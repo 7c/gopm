@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -81,7 +80,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 		target = args[0]
 	} else {
 		// Infer target with a separate connection (each connection is one request)
-		c, err := client.NewWithConfig(configFlag)
+		c, err := newClient()
 		if err != nil {
 			outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 		}
@@ -89,7 +88,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 		c.Close()
 	}
 
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/config"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
@@ -157,7 +156,7 @@ func isSystemdInstalled() bool {
 // getDaemonPing queries the running daemon for its status.
 // Returns nil if the daemon is not running or unreachable.
 func getDaemonPing() *protocol.PingResult {
-	c, err := client.TryConnect(configFlag)
+	c, err := tryClient()
 	if err != nil {
 		return nil
 	}

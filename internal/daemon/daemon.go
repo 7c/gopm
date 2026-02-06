@@ -42,7 +42,7 @@ type Daemon struct {
 }
 
 // Run starts the daemon. This is the main entry point for daemon mode.
-func Run(version string, configFlag string) {
+func Run(version string, configFlag string, debug bool) {
 	Version = version
 	home := protocol.GopmHome()
 	os.MkdirAll(home, 0755)
@@ -69,7 +69,11 @@ func Run(version string, configFlag string) {
 		fmt.Fprintf(os.Stderr, "cannot open log file: %v\n", err)
 		os.Exit(1)
 	}
-	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logLevel := slog.LevelInfo
+	if debug {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
 	// Log config warnings
@@ -259,14 +263,17 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 	for scanner.Scan() {
 		var req protocol.Request
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			slog.Debug("invalid request from client", "error", err)
 			resp := protocol.Response{Error: "invalid request: " + err.Error()}
 			data, _ := json.Marshal(resp)
 			fmt.Fprintf(conn, "%s\n", data)
 			return
 		}
 
+		slog.Debug("request received", "method", req.Method)
 		resp := d.handleRequest(req)
 		data, _ := json.Marshal(resp)
+		slog.Debug("response sent", "method", req.Method, "success", resp.Success, "bytes", len(data))
 		fmt.Fprintf(conn, "%s\n", data)
 	}
 }

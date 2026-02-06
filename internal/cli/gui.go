@@ -3,7 +3,6 @@ package cli
 import (
 	"time"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/gui"
 	"github.com/spf13/cobra"
 )
@@ -15,7 +14,7 @@ var guiCmd = &cobra.Command{
 	Short: "Launch interactive terminal UI",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		c, err := client.NewWithConfig(configFlag)
+		c, err := newClient()
 		if err != nil {
 			outputError(err.Error())
 		}

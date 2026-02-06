@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -115,7 +114,7 @@ func runPM2Import(cmd *cobra.Command, args []string) {
 		}
 
 		// Start in gopm (new connection per request).
-		c, err := client.NewWithConfig(configFlag)
+		c, err := newClient()
 		if err != nil {
 			fmt.Printf("  %s connect to daemon: %v\n", display.Red("FAIL"), err)
 			continue

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -21,7 +20,7 @@ var restartCmd = &cobra.Command{
 func runRestart(cmd *cobra.Command, args []string) {
 	target := args[0]
 
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		exitError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

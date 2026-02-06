@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -19,7 +18,7 @@ var flushCmd = &cobra.Command{
 func runFlush(cmd *cobra.Command, args []string) {
 	target := args[0]
 
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}

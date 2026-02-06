@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/display"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/spf13/cobra"
@@ -41,7 +40,7 @@ func runReboot(cmd *cobra.Command, args []string) {
 		exitError("systemd service not installed — daemon will not restart automatically. Use --force to reboot anyway")
 	}
 
-	c, err := client.NewWithConfig(configFlag)
+	c, err := newClient()
 	if err != nil {
 		outputError(fmt.Sprintf("cannot connect to daemon: %v", err))
 	}
@@ -74,7 +73,7 @@ func runReboot(cmd *cobra.Command, args []string) {
 
 	// No systemd — restart the daemon ourselves.
 	fmt.Printf("[2/2] %s daemon and restoring processes...\n", display.Dim("Starting"))
-	c2, err := client.NewWithConfig(configFlag)
+	c2, err := newClient()
 	if err != nil {
 		outputError(fmt.Sprintf("failed to start new daemon: %v", err))
 	}
