@@ -159,12 +159,12 @@ type LogsParams struct {
 
 // PingResult is returned by the "ping" method.
 type PingResult struct {
-	PID           int    `json:"pid"`
-	Uptime        string `json:"uptime"`
-	UptimeSeconds int64  `json:"uptime_seconds"`
-	Version       string `json:"version"`
-	ConfigFile    string `json:"config_file,omitempty"`
-	ConfigSource  string `json:"config_source,omitempty"`
+	PID          int    `json:"pid"`
+	Uptime       string `json:"uptime"`
+	UptimeMs     int64  `json:"uptime_ms"`
+	Version      string `json:"version"`
+	ConfigFile   string `json:"config_file,omitempty"`
+	ConfigSource string `json:"config_source,omitempty"`
 }
 
 // IsRunningResult is returned by the "isrunning" method.

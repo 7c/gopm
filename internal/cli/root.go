@@ -144,6 +144,7 @@ func Execute() {
 	rootCmd.AddCommand(unsuspendCmd)
 	rootCmd.AddCommand(pidCmd)
 	rootCmd.AddCommand(pm2Cmd)
+	rootCmd.AddCommand(watchCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

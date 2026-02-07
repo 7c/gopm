@@ -315,12 +315,12 @@ func (d *Daemon) handleRequest(req protocol.Request) protocol.Response {
 
 func (d *Daemon) handlePing() protocol.Response {
 	result := protocol.PingResult{
-		PID:           os.Getpid(),
-		Uptime:        protocol.FormatDuration(time.Since(d.startTime)),
-		UptimeSeconds: int64(time.Since(d.startTime).Seconds()),
-		Version:       Version,
-		ConfigFile:    d.configPath,
-		ConfigSource:  d.configSource,
+		PID:          os.Getpid(),
+		Uptime:       protocol.FormatDuration(time.Since(d.startTime)),
+		UptimeMs:     time.Since(d.startTime).Milliseconds(),
+		Version:      Version,
+		ConfigFile:   d.configPath,
+		ConfigSource: d.configSource,
 	}
 	return successResponse(result)
 }

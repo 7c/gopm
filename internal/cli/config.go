@@ -65,7 +65,8 @@ var statusCmd = &cobra.Command{
 			}
 			if daemonPing != nil {
 				out["daemon_pid"] = daemonPing.PID
-				out["daemon_uptime"] = daemonPing.Uptime
+				out["daemon_uptime"] = daemonPing.UptimeMs
+			out["daemon_uptime_str"] = daemonPing.Uptime
 				out["daemon_version"] = daemonPing.Version
 				if daemonPing.ConfigFile != "" {
 					out["daemon_config_file"] = daemonPing.ConfigFile

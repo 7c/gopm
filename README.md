@@ -214,6 +214,32 @@ gopm list -p
 
 Non-local listeners (e.g. `tcp@0.0.0.0:3000`) are highlighted in red.
 
+### `gopm watch`
+
+Live-updating process table that refreshes at a configurable interval (like `watch` + `gopm list`).
+
+```
+Usage:
+  gopm watch [name|id|all] [flags]
+
+Flags:
+  -i, --interval int   Refresh interval in seconds (default: 1, min: 1)
+  -p, --ports          Show listening ports column
+      --json           Stream newline-delimited JSON on each tick
+```
+
+**Examples:**
+
+```bash
+gopm watch              # watch all processes, update every 1s
+gopm watch api          # watch only the "api" process
+gopm watch -i 5         # update every 5 seconds
+gopm watch -p           # include ports column
+gopm watch --json       # stream JSON (newline-delimited)
+```
+
+Press `Ctrl+C` to exit. The cursor is hidden during watch and restored on exit.
+
 ### `gopm describe`
 
 Show detailed information about a process including its configuration, environment variables, restart policy, and log paths.

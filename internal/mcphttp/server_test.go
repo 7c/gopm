@@ -46,7 +46,7 @@ func (m *mockDaemon) HandleRequest(req protocol.Request) protocol.Response {
 		result := protocol.PingResult{
 			PID:           12345,
 			Uptime:        "5m",
-			UptimeSeconds: 300,
+			UptimeMs: 300000,
 			Version:       "test-1.0",
 		}
 		data, _ := json.Marshal(result)
