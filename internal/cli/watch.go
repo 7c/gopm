@@ -18,6 +18,7 @@ import (
 var (
 	watchInterval int
 	watchPorts    bool
+	watchTimeout  int
 )
 
 var watchCmd = &cobra.Command{
@@ -42,7 +43,10 @@ If only one process is managed, the target can be omitted.`,
   gopm watch -p
 
   # Stream JSON output
-  gopm watch --json`,
+  gopm watch --json
+
+  # Auto-quit after 30 seconds
+  gopm watch --timeout 30`,
 	Args: cobra.MaximumNArgs(1),
 	Run:  runWatch,
 }
@@ -51,6 +55,7 @@ func init() {
 	f := watchCmd.Flags()
 	f.IntVarP(&watchInterval, "interval", "i", 1, "refresh interval in seconds (min: 1)")
 	f.BoolVarP(&watchPorts, "ports", "p", false, "show listening ports column")
+	f.IntVarP(&watchTimeout, "timeout", "t", 0, "auto-quit after N seconds (0 = no timeout)")
 }
 
 func runWatch(cmd *cobra.Command, args []string) {
@@ -107,6 +112,12 @@ func runWatch(cmd *cobra.Command, args []string) {
 
 	ticker := time.NewTicker(time.Duration(watchInterval) * time.Second)
 	defer ticker.Stop()
+
+	// Set up timeout if requested.
+	var timeoutCh <-chan time.Time
+	if watchTimeout > 0 {
+		timeoutCh = time.After(time.Duration(watchTimeout) * time.Second)
+	}
 
 	// Run immediately on first tick, then on interval.
 	render := func() {
@@ -182,6 +193,8 @@ func runWatch(cmd *cobra.Command, args []string) {
 	for {
 		select {
 		case <-sigCh:
+			return
+		case <-timeoutCh:
 			return
 		case <-ticker.C:
 			render()

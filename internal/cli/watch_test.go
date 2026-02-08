@@ -110,6 +110,17 @@ func TestWatchCmd_Flags(t *testing.T) {
 	if portsFlag.DefValue != "false" {
 		t.Errorf("expected default 'false', got %q", portsFlag.DefValue)
 	}
+
+	timeoutFlag := f.Lookup("timeout")
+	if timeoutFlag == nil {
+		t.Fatal("expected --timeout flag to be registered")
+	}
+	if timeoutFlag.Shorthand != "t" {
+		t.Errorf("expected shorthand 't', got %q", timeoutFlag.Shorthand)
+	}
+	if timeoutFlag.DefValue != "0" {
+		t.Errorf("expected default '0', got %q", timeoutFlag.DefValue)
+	}
 }
 
 func TestWatchCmd_Args(t *testing.T) {

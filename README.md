@@ -224,6 +224,7 @@ Usage:
 
 Flags:
   -i, --interval int   Refresh interval in seconds (default: 1, min: 1)
+  -t, --timeout int    Auto-quit after N seconds (0 = no timeout)
   -p, --ports          Show listening ports column
       --json           Stream newline-delimited JSON on each tick
 ```
@@ -234,6 +235,7 @@ Flags:
 gopm watch              # watch all processes, update every 1s
 gopm watch api          # watch only the "api" process
 gopm watch -i 5         # update every 5 seconds
+gopm watch -t 30        # auto-quit after 30 seconds
 gopm watch -p           # include ports column
 gopm watch --json       # stream JSON (newline-delimited)
 ```
