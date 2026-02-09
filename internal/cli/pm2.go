@@ -12,9 +12,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var pm2Dry bool
+
 var pm2Cmd = &cobra.Command{
-	Use:   "pm2",
-	Short: "Import all processes from PM2 into gopm",
+	Use:   "pm2 [name...]",
+	Short: "Import processes from PM2 into gopm",
 	Long: `Read the PM2 process list, start each process in gopm, and remove it from PM2.
 
 This is a one-time migration command. For each PM2 process it:
@@ -22,10 +24,29 @@ This is a one-time migration command. For each PM2 process it:
   2. Starts the process in gopm with equivalent settings
   3. Deletes the process from PM2
 
+Specify one or more PM2 process names to migrate selectively, or omit to migrate all.
+
+Use --dry to preview the import without starting or deleting anything.
+
 Verbose output is printed for every step so you can verify the migration.
 Cluster-mode processes are imported as single fork-mode processes.`,
-	Args: cobra.NoArgs,
-	Run:  runPM2Import,
+	Example: `  # Migrate all PM2 processes
+  gopm pm2
+
+  # Migrate a single process
+  gopm pm2 my-api
+
+  # Migrate multiple specific processes
+  gopm pm2 my-api worker
+
+  # Preview what would be imported (no changes)
+  gopm pm2 --dry
+  gopm pm2 my-api --dry`,
+	Run: runPM2Import,
+}
+
+func init() {
+	pm2Cmd.Flags().BoolVar(&pm2Dry, "dry", false, "preview import as JSON without starting or deleting")
 }
 
 // pm2 jlist JSON structures
@@ -81,17 +102,31 @@ func runPM2Import(cmd *cobra.Command, args []string) {
 		outputError(fmt.Sprintf("pm2 jlist failed: %v", err))
 	}
 
-	var procs []pm2Process
-	if err := json.Unmarshal(out, &procs); err != nil {
+	var allProcs []pm2Process
+	if err := json.Unmarshal(out, &allProcs); err != nil {
 		outputError(fmt.Sprintf("cannot parse pm2 jlist output: %v", err))
 	}
 
-	if len(procs) == 0 {
+	if len(allProcs) == 0 {
 		fmt.Println("No PM2 processes found.")
 		return
 	}
 
+	// Filter to requested names if any were provided.
+	procs := allProcs
+	if len(args) > 0 {
+		procs = filterPM2Procs(allProcs, args)
+		if len(procs) == 0 {
+			outputError(fmt.Sprintf("no PM2 processes matched: %s", strings.Join(args, ", ")))
+		}
+	}
+
 	fmt.Printf("Found %s PM2 process(es)\n", display.Bold(fmt.Sprintf("%d", len(procs))))
+
+	if pm2Dry {
+		runPM2Dry(procs)
+		return
+	}
 
 	imported := 0
 	for i, p := range procs {
@@ -154,6 +189,38 @@ func runPM2Import(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("\nSummary: imported %s/%d processes\n",
 		display.Bold(fmt.Sprintf("%d", imported)), len(procs))
+}
+
+// filterPM2Procs returns only PM2 processes whose name matches one of the targets.
+func filterPM2Procs(procs []pm2Process, targets []string) []pm2Process {
+	want := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		want[t] = true
+	}
+	var result []pm2Process
+	for _, p := range procs {
+		if want[p.Name] {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// runPM2Dry prints the gopm StartParams JSON for each process without starting or deleting.
+func runPM2Dry(procs []pm2Process) {
+	for i, p := range procs {
+		params := pm2ToStartParams(p)
+		data, err := json.MarshalIndent(params, "", "  ")
+		if err != nil {
+			fmt.Printf("  %s marshal %s: %v\n", display.Red("FAIL"), p.Name, err)
+			continue
+		}
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("%s %s\n", display.Dim("━━━"), display.Bold(p.Name))
+		fmt.Println(string(data))
+	}
 }
 
 // pm2ToStartParams converts a PM2 process to gopm StartParams.

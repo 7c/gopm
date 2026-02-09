@@ -691,18 +691,33 @@ If the gopm daemon is running and the PID belongs to a managed process, extra me
 
 ### `gopm pm2`
 
-One-time migration from PM2. Reads all PM2 processes, starts each in gopm with equivalent settings, and removes them from PM2. Verbose output shows every field being imported.
+One-time migration from PM2. Reads PM2 processes, starts each in gopm with equivalent settings, and removes them from PM2. Verbose output shows every field being imported.
 
 ```
 Usage:
-  gopm pm2
+  gopm pm2 [name...] [flags]
+
+Flags:
+      --dry   Preview import as JSON without starting or deleting
 ```
+
+Specify one or more PM2 process names to migrate selectively, or omit to migrate all.
 
 **What it imports:**
 - Script path, arguments, working directory, interpreter
 - Environment variables (PM2 internal vars are filtered out)
 - Restart policy: autorestart, max_restarts, restart_delay, min_uptime, kill_timeout
 - Cluster-mode processes are imported as single fork-mode processes (with a warning)
+
+**Examples:**
+
+```bash
+gopm pm2                  # migrate all PM2 processes
+gopm pm2 my-api           # migrate only "my-api"
+gopm pm2 my-api worker    # migrate "my-api" and "worker"
+gopm pm2 --dry            # preview all as JSON (no changes)
+gopm pm2 my-api --dry     # preview only "my-api" as JSON
+```
 
 **Example output:**
 
@@ -721,6 +736,19 @@ Found 2 PM2 process(es)
   → Removing from PM2... OK
 
 Summary: imported 2/2 processes
+```
+
+**Dry-run output (`--dry`):**
+
+```
+━━━ my-api
+{
+  "command": "/home/user/api/server.js",
+  "name": "my-api",
+  "cwd": "/home/user/api",
+  "interpreter": "node",
+  "autorestart": "always"
+}
 ```
 
 ---
