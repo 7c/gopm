@@ -40,6 +40,7 @@ const (
 	MethodPing      = "ping"
 	MethodKill      = "kill"
 	MethodReboot    = "reboot"
+	MethodStats     = "stats"
 )
 
 // Request is the IPC message from CLI to daemon.
@@ -177,6 +178,26 @@ type IsRunningResult struct {
 	ExitCode int    `json:"exit_code,omitempty"`
 	Restarts int    `json:"restarts,omitempty"`
 }
+
+// StatsParams are the parameters for the "stats" method.
+type StatsParams struct {
+	Target string `json:"target"`
+	Hours  int    `json:"hours,omitempty"`
+}
+
+// MetricsSnapshot is a single point-in-time observation of a process.
+type MetricsSnapshot struct {
+	Timestamp int64   `json:"ts"`
+	CPU       float64 `json:"cpu"`
+	Memory    uint64  `json:"mem"`
+	Restarts  int     `json:"restarts"`
+	UptimeSec int64   `json:"uptime"`
+	Status    Status  `json:"status"`
+}
+
+// StatsResult is returned by the "stats" method.
+// Keys are process names; values are chronologically ordered snapshots.
+type StatsResult map[string][]MetricsSnapshot
 
 // Duration wraps time.Duration with JSON string marshaling (Go duration format).
 type Duration struct {

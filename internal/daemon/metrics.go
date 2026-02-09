@@ -18,6 +18,8 @@ func (d *Daemon) sampleMetrics() {
 	ticker := time.NewTicker(metricsInterval)
 	defer ticker.Stop()
 
+	snapshotTick := 0
+
 	for {
 		select {
 		case <-ticker.C:
@@ -78,6 +80,13 @@ func (d *Daemon) sampleMetrics() {
 				}
 				d.mu.RUnlock()
 				d.telegraf.Emit(infos, time.Since(d.startTime))
+			}
+
+			// Capture time-series snapshots every snapshotInterval ticks (60s).
+			snapshotTick++
+			if snapshotTick >= snapshotInterval {
+				snapshotTick = 0
+				d.captureSnapshots()
 			}
 
 		case <-d.stopCh:

@@ -242,6 +242,35 @@ gopm watch --json       # stream JSON (newline-delimited)
 
 Press `Ctrl+C` to exit. The cursor is hidden during watch and restored on exit.
 
+### `gopm stats`
+
+Display terminal charts showing CPU, memory, uptime, and restart history. The daemon collects metrics snapshots every 60 seconds and stores up to 18 hours in memory. Charts use Unicode braille characters for high-resolution rendering.
+
+```
+Usage:
+  gopm stats [all|name|id] [flags]
+
+Flags:
+      --hours int   Hours of history to show (default: 6, max: 18)
+      --cpu         Show only CPU chart
+      --mem         Show only memory chart
+      --uptime      Show only uptime chart
+      --all         Show all charts (default)
+      --json        Output raw snapshot data as JSON
+```
+
+**Examples:**
+
+```bash
+gopm stats                   # all charts for all processes
+gopm stats my-api            # charts for a specific process
+gopm stats --cpu --hours 2   # CPU chart, last 2 hours
+gopm stats --mem             # memory chart only
+gopm stats --json            # raw JSON snapshot data
+```
+
+When multiple processes are shown, each chart overlays all processes with colored lines and a legend.
+
 ### `gopm describe`
 
 Show detailed information about a process including its configuration, environment variables, restart policy, and log paths.

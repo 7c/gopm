@@ -85,7 +85,7 @@ func (c *Client) Send(method string, params interface{}) (*protocol.Response, er
 	// Read response using persistent scanner
 	if c.scanner == nil {
 		c.scanner = bufio.NewScanner(c.conn)
-		c.scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
+		c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024) // 4MB buffer
 	}
 	if !c.scanner.Scan() {
 		if err := c.scanner.Err(); err != nil {

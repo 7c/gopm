@@ -36,6 +36,8 @@ type Daemon struct {
 
 	mcpServer    *mcphttp.Server
 	telegraf     *telemetry.TelegrafEmitter
+	snapshots map[string]*snapshotRing // per-process metrics history
+
 	resolved     *config.Resolved
 	configPath   string
 	configSource string
@@ -90,6 +92,7 @@ func Run(version string, configFlag string, debug bool) {
 
 	d := &Daemon{
 		processes:    make(map[string]*Process),
+		snapshots:    make(map[string]*snapshotRing),
 		startTime:    time.Now(),
 		stopCh:       make(chan struct{}),
 		home:         home,
@@ -308,6 +311,8 @@ func (d *Daemon) handleRequest(req protocol.Request) protocol.Response {
 		return d.handleKill()
 	case protocol.MethodReboot:
 		return d.handleReboot()
+	case protocol.MethodStats:
+		return d.handleStats(req.Params)
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", req.Method))
 	}
@@ -456,6 +461,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) protocol.Response {
 		p.CloseLogWriters()
 		d.mu.Lock()
 		delete(d.processes, p.info.Name)
+		delete(d.snapshots, p.info.Name)
 		d.mu.Unlock()
 		slog.Info("process deleted", "name", p.info.Name)
 	}
