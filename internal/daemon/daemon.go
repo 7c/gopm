@@ -689,9 +689,10 @@ func (d *Daemon) rebootShutdown() {
 		d.telegraf.Close()
 	}
 
-	// Stop accepting connections
-	d.listener.Close()
+	// Signal goroutines to stop before closing listener so acceptLoop
+	// sees stopCh closed and exits without logging spurious errors.
 	close(d.stopCh)
+	d.listener.Close()
 
 	// Stop all processes in parallel
 	d.mu.RLock()
@@ -730,9 +731,10 @@ func (d *Daemon) shutdown() {
 		d.telegraf.Close()
 	}
 
-	// Stop accepting connections
-	d.listener.Close()
+	// Signal goroutines to stop before closing listener so acceptLoop
+	// sees stopCh closed and exits without logging spurious errors.
 	close(d.stopCh)
+	d.listener.Close()
 
 	// Stop all processes in parallel
 	d.mu.RLock()

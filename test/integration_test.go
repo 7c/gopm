@@ -194,20 +194,19 @@ func TestSaveAndResurrect(t *testing.T) {
 	// Give daemon a moment to persist.
 	time.Sleep(300 * time.Millisecond)
 
-	// Delete all
-	env.MustGopm("delete", "all")
-	time.Sleep(300 * time.Millisecond)
-	if env.ProcessCount() != 0 {
-		t.Fatal("expected 0 processes after delete all")
-	}
+	// Kill daemon (processes die with it, but dump.json remains)
+	env.Gopm("kill")
+	time.Sleep(1 * time.Second)
 
-	// Resurrect
+	// Start a fresh daemon and resurrect from dump.json
 	out := env.MustGopm("resurrect")
 	if !strings.Contains(strings.ToLower(out), "resurrected") {
 		t.Errorf("resurrect output unexpected: %q", out)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	env.WaitForStatus("saver1", "online", 5*time.Second)
+	env.WaitForStatus("saver2", "online", 5*time.Second)
+
 	count := env.ProcessCount()
 	if count != 2 {
 		t.Errorf("expected 2 processes after resurrect, got %d", count)

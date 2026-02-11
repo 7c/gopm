@@ -74,6 +74,31 @@ func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 			proc, err := d.startProcess(params)
 			if err != nil {
 				slog.Error("failed to resurrect process", "name", info.Name, "error", err)
+				// Register as errored so the process remains visible and
+				// can be restarted manually or investigated.
+				d.mu.Lock()
+				if _, exists := d.processes[info.Name]; exists {
+					d.mu.Unlock()
+					continue
+				}
+				id := d.nextID
+				d.nextID++
+				d.mu.Unlock()
+
+				proc := &Process{info: info}
+				proc.info.ID = id
+				proc.info.PID = 0
+				proc.info.Status = protocol.StatusErrored
+				proc.info.StatusReason = err.Error()
+				proc.info.CPU = 0
+				proc.info.Memory = 0
+
+				d.mu.Lock()
+				d.processes[info.Name] = proc
+				d.mu.Unlock()
+
+				slog.Info("registered failed process as errored", "name", info.Name)
+				resurrected = append(resurrected, proc.Info())
 				continue
 			}
 			resurrected = append(resurrected, proc.Info())
