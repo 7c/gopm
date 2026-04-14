@@ -1282,26 +1282,75 @@ These fields are only written on lines where `status=online`.
 **Aggregation recipes:**
 
 ```promql
-# CPU: show the rolling 5-minute average per process
+# --- pid (state) ---
+# Current OS PID of each online process.
+last_over_time(gopm_pid{name="api"}[5m])
+
+# Detect PID changes in the last hour (one change = one restart).
+changes(gopm_pid{name="api"}[1h])
+
+# --- cpu (gauge, %) ---
+# Rolling 5-minute average per process.
 avg_over_time(gopm_cpu{name="api"}[5m])
 
-# CPU: show the max spike per process over the last hour
+# Max CPU spike per process over the last hour.
 max_over_time(gopm_cpu{name="api"}[1h])
 
-# Memory: current vs. peak — leak detection
+# Top 5 CPU hogs right now.
+topk(5, gopm_cpu)
+
+# --- memory (gauge, bytes) ---
+# Current memory.
 gopm_memory{name="api"}
+
+# Rolling average memory (MB) — smoother trend line.
+avg_over_time(gopm_memory{name="api"}[5m]) / 1024 / 1024
+
+# Memory growth over the last 24h (leak detection).
+deriv(gopm_memory{name="api"}[1h])
+
+# --- memory_peak (per-instance counter, bytes) ---
+# Peak RSS seen during the current instance.
+gopm_memory_peak{name="api"}
+
+# Highest peak ever recorded in the last 24h (survives reset on restart).
 max_over_time(gopm_memory_peak{name="api"}[24h])
 
-# Child count — should stay flat; any climb is an orphan bug
+# Difference between peak and current = headroom lost to transient spikes.
+gopm_memory_peak{name="api"} - gopm_memory{name="api"}
+
+# --- uptime (per-instance counter, seconds) ---
+# Current uptime of an instance.
+gopm_uptime{name="api"}
+
+# Uptime in hours, formatted for dashboards.
+gopm_uptime{name="api"} / 3600
+
+# Alert: process restarted in the last 60 seconds.
+gopm_uptime{name="api"} < 60
+
+# Count how many restarts happened in the last hour (uptime resets on Start).
+resets(gopm_uptime{name="api"}[1h])
+
+# --- child_count (gauge) ---
+# Current descendant count. Should stay flat; any climb is an orphan bug.
 last_over_time(gopm_child_count{name="api"}[5m])
+
+# Alert: child tree grew by more than 5 in the last hour.
+delta(gopm_child_count{name="api"}[1h]) > 5
+
+# Total children across all managed processes.
+sum(gopm_child_count)
 ```
 
 ```sql
 -- InfluxQL equivalents
-SELECT mean("cpu")         FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+SELECT last("pid")          FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+SELECT mean("cpu")          FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 SELECT mean("memory"),
-       max("memory_peak")  FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
-SELECT last("child_count") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+       max("memory_peak")   FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+SELECT last("uptime")       FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+SELECT last("child_count")  FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 ```
 
 #### Lifecycle counters (always emitted)
@@ -1328,39 +1377,164 @@ These fields are written on every line, including `status=stopped` and `status=e
 **Aggregation recipes:**
 
 ```promql
-# Crash loop detection — crashes per hour, per process
-increase(gopm_crash_count{name="api"}[1h])
+# --- restarts (gauge, counter with reset) ---
+# Current bucket toward max_restarts.
+gopm_restarts{name="api"}
 
-# Restart churn — how many Starts happened in the last 5 minutes
+# Max restarts observed in the last 5 minutes — catches short crash loops.
+max_over_time(gopm_restarts{name="api"}[5m])
+
+# Alert: crash loop in progress (3 or more restarts in the bucket).
+gopm_restarts > 3
+
+# --- restarts_since_reset (gauge) ---
+# Snapshot taken when supervisor enters restart delay.
+gopm_restarts_since_reset{name="api"}
+
+# Any process currently accumulating restarts?
+max by (name) (gopm_restarts_since_reset) > 0
+
+# --- start_count (lifetime counter) ---
+# Starts per second, per process.
 rate(gopm_start_count{name="api"}[5m])
 
-# "Is the process currently in its restart delay?"
-max_over_time(gopm_in_restart_delay{name="api"}[1m]) == 1
+# Total starts in the last hour.
+increase(gopm_start_count{name="api"}[1h])
 
-# Log write rate (bytes/s) — detect runaway logging
+# Which processes are flapping the most?
+topk(5, increase(gopm_start_count[1h]))
+
+# --- stop_count (lifetime counter) ---
+# Stops per second (user + rollup).
+rate(gopm_stop_count{name="api"}[5m])
+
+# Total stops in the last 24h per process.
+sum by (name) (increase(gopm_stop_count[24h]))
+
+# --- crash_count (lifetime counter) ---
+# Crash loop detection — crashes per hour.
+increase(gopm_crash_count{name="api"}[1h])
+
+# Alert: > 3 crashes in 5 minutes.
+increase(gopm_crash_count[5m]) > 3
+
+# Ratio of crashes to starts — healthy processes trend toward 0.
+  increase(gopm_crash_count[1h])
+/ increase(gopm_start_count[1h])
+
+# --- user_restart_count (lifetime counter) ---
+# User-initiated restart rate.
+rate(gopm_user_restart_count{name="api"}[5m])
+
+# Total manual restarts today.
+increase(gopm_user_restart_count[24h])
+
+# --- supervisor_restart_count (lifetime counter) ---
+# Auto-restart rate (the supervisor reviving the process).
+rate(gopm_supervisor_restart_count{name="api"}[5m])
+
+# Ratio: how often does the supervisor restart this process vs. the user?
+  sum_over_time(gopm_supervisor_restart_count{name="api"}[24h])
+/ sum_over_time(gopm_user_restart_count{name="api"}[24h])
+
+# --- instance (lifetime counter) ---
+# Current instance number (increments on every Start).
+gopm_instance{name="api"}
+
+# How many instances were started in the last hour — direct restart counter.
+increase(gopm_instance{name="api"}[1h])
+
+# Most-churned process in the last hour.
+topk(1, increase(gopm_instance[1h]))
+
+# --- last_exit_code (state) ---
+# Show current last-exit status per process.
+gopm_last_exit_code
+
+# Processes whose most recent exit was non-zero (crashed).
+count by (name) (gopm_last_exit_code != 0)
+
+# --- last_run_duration_ms (state) ---
+# Last run in seconds.
+gopm_last_run_duration_ms{name="api"} / 1000
+
+# Alert: crash-looping process whose runs are shorter than 10s.
+gopm_last_run_duration_ms{name="api"} < 10000 and gopm_last_exit_code{name="api"} != 0
+
+# --- in_restart_delay (state, 0/1) ---
+# Is the supervisor currently sleeping before its next restart?
+gopm_in_restart_delay{name="api"} == 1
+
+# Alert: stuck in restart delay for > 2 minutes.
+max_over_time(gopm_in_restart_delay{name="api"}[2m]) == 1
+
+# Count processes currently in their restart delay.
+count(gopm_in_restart_delay == 1)
+
+# --- log_bytes_written (per-instance counter) ---
+# Current log write rate in bytes/s per process.
 rate(gopm_log_bytes_written{name="api"}[5m])
 
-# Was this process ever rotating its logs in the last hour?
+# Log write rate in MB/h.
+rate(gopm_log_bytes_written{name="api"}[5m]) * 3600 / 1024 / 1024
+
+# Alert: process writing > 10 MB/s of logs (runaway logging).
+rate(gopm_log_bytes_written[5m]) > 10 * 1024 * 1024
+
+# --- log_rotations (per-instance counter) ---
+# Rotation events per hour per process.
+increase(gopm_log_rotations{name="api"}[1h])
+
+# Did this process rotate at all in the last hour?
 increase(gopm_log_rotations{name="api"}[1h]) > 0
 
-# Ratio: how often does the supervisor have to restart this process vs. the user?
-  sum_over_time(gopm_supervisor_restart_count{name="api"}[24h])
-/ sum_over_time(gopm_user_restart_count{name="api"}[24h] offset 0)
+# --- listener_count (gauge) ---
+# Current number of listening sockets.
+gopm_listener_count{name="api"}
+
+# Alert: process unexpectedly lost all its listeners.
+gopm_listener_count{name="api"} == 0 and gopm_status{name="api",status="online"} == 1
+
+# Detect listener count changes (binding / unbinding events) in the last hour.
+changes(gopm_listener_count{name="api"}[1h])
 ```
 
 ```sql
 -- InfluxQL equivalents (use non_negative_derivative to get rates)
-SELECT non_negative_derivative(last("crash_count"), 1h)
-  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+SELECT max("restarts")
+  FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 
 SELECT non_negative_derivative(last("start_count"), 5m)
   FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT non_negative_derivative(last("stop_count"), 5m)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT non_negative_derivative(last("crash_count"), 1h)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT non_negative_derivative(last("user_restart_count"), 5m)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT non_negative_derivative(last("supervisor_restart_count"), 5m)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT last("instance"),
+       last("last_exit_code"),
+       last("last_run_duration_ms")
+  FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 
 SELECT last("in_restart_delay")
   FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 
 SELECT non_negative_derivative(last("log_bytes_written"), 1m)
   FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT non_negative_derivative(last("log_rotations"), 1h)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT last("listener_count")
+  FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 ```
 
 ---
@@ -1388,32 +1562,127 @@ Measurement: `<measurement>_daemon` (default `gopm_daemon`). Tag: `host`.
 **Aggregation recipes:**
 
 ```promql
-# Snapshot dashboards
+# --- processes_total (gauge) ---
+# Total managed processes (online + stopped + errored).
+last_over_time(gopm_daemon_processes_total[5m])
+
+# How did total process count change in the last hour?
+delta(gopm_daemon_processes_total[1h])
+
+# --- processes_online (gauge) ---
+# Currently running processes.
 last_over_time(gopm_daemon_processes_online[5m])
+
+# Alert: fewer than N processes online (capacity check).
+gopm_daemon_processes_online < 3
+
+# --- processes_stopped (gauge) ---
+# Processes in the "stopped" state.
+last_over_time(gopm_daemon_processes_stopped[5m])
+
+# --- processes_errored (gauge) ---
+# Processes that hit max_restarts and gave up.
+last_over_time(gopm_daemon_processes_errored[5m])
+
+# Alert: any process in errored state.
+gopm_daemon_processes_errored > 0
+
+# --- total_children (gauge) ---
+# Sum of child_count across all managed processes.
 last_over_time(gopm_daemon_total_children[5m])
 
-# Is the daemon up? daemon_uptime > 0 and climbing
+# Alert: total children jumped by more than 10 in an hour — orphan bug.
+delta(gopm_daemon_total_children[1h]) > 10
+
+# --- daemon_uptime (per-instance counter, seconds) ---
+# Current uptime of the daemon.
 gopm_daemon_daemon_uptime
 
-# Detect daemon restart — uptime resets to 0
+# Uptime in days.
+gopm_daemon_daemon_uptime / 86400
+
+# Detect daemon restart — uptime resets to 0.
 resets(gopm_daemon_daemon_uptime[1h]) > 0
 
-# Alert: any zombie detection (should never fire)
-increase(gopm_daemon_zombie_detections[5m]) > 0
+# How many daemon restarts in the last 24h?
+resets(gopm_daemon_daemon_uptime[24h])
 
-# Alert: state save failing
+# --- rpc_errors (lifetime counter) ---
+# RPC error rate per second.
+rate(gopm_daemon_rpc_errors[1m])
+
+# Total RPC errors in the last hour.
+increase(gopm_daemon_rpc_errors[1h])
+
+# Alert: RPC errors climbing faster than one every 10 seconds.
+rate(gopm_daemon_rpc_errors[5m]) > 0.1
+
+# --- state_saves (lifetime counter) ---
+# State save rate (writes/sec) — useful to detect save thrashing.
+rate(gopm_daemon_state_saves[1m])
+
+# Total saves per hour.
+increase(gopm_daemon_state_saves[1h])
+
+# Ratio of failures to total saves.
+  increase(gopm_daemon_state_save_failures[1h])
+/ increase(gopm_daemon_state_saves[1h])
+
+# --- state_save_failures (lifetime counter) ---
+# Alert: any state save failure (should stay at 0).
 increase(gopm_daemon_state_save_failures[5m]) > 0
 
-# Traffic: RPC error rate per second
-rate(gopm_daemon_rpc_errors[1m])
+# --- resurrect_count (lifetime counter) ---
+# How many times the resurrect path has run. Normally 1 per daemon start.
+gopm_daemon_resurrect_count
+
+# Unexpected resurrects in the last 24h (more than 1 per daemon boot).
+increase(gopm_daemon_resurrect_count[24h])
+  - resets(gopm_daemon_daemon_uptime[24h]) - 1
+
+# --- zombie_detections (lifetime counter) ---
+# Alert: any zombie detection — should never fire.
+increase(gopm_daemon_zombie_detections[5m]) > 0
+
+# Cumulative zombie events in the last 24h.
+increase(gopm_daemon_zombie_detections[24h])
+
+# --- monitor_stales (lifetime counter) ---
+# Stale monitor rate — expected to be small but not necessarily zero.
+rate(gopm_daemon_monitor_stales[5m])
+
+# Alert: unusual stale-monitor burst.
+increase(gopm_daemon_monitor_stales[5m]) > 10
+
+# --- restart_cancels (lifetime counter) ---
+# Rate of user restarts racing the supervisor. Normal to be non-zero.
+rate(gopm_daemon_restart_cancels[5m])
+
+# Total cancels today.
+increase(gopm_daemon_restart_cancels[24h])
 ```
 
 ```sql
-SELECT last("processes_online")  FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
-SELECT last("total_children")    FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
-SELECT non_negative_derivative(last("zombie_detections"), 5m)
+-- InfluxQL equivalents
+SELECT last("processes_total"),
+       last("processes_online"),
+       last("processes_stopped"),
+       last("processes_errored"),
+       last("total_children"),
+       last("daemon_uptime")
   FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
+
 SELECT non_negative_derivative(last("rpc_errors"), 1m)
+  FROM "gopm_daemon" WHERE $timeFilter GROUP BY time(1m)
+
+SELECT non_negative_derivative(last("state_saves"), 1m),
+       non_negative_derivative(last("state_save_failures"), 1m)
+  FROM "gopm_daemon" WHERE $timeFilter GROUP BY time(1m)
+
+SELECT non_negative_derivative(last("resurrect_count"), 1h),
+       non_negative_derivative(last("zombie_detections"), 5m),
+       non_negative_derivative(last("monitor_stales"), 5m),
+       non_negative_derivative(last("restart_cancels"), 5m)
   FROM "gopm_daemon" WHERE $timeFilter GROUP BY time(1m)
 ```
 
@@ -1432,19 +1701,41 @@ One series per method — the tag values are the RPC method names: `ping`, `star
 **Aggregation recipes:**
 
 ```promql
-# RPC throughput per method (calls per second)
+# --- calls (lifetime counter, one series per method) ---
+# Current call count for each method.
+gopm_rpc_calls
+
+# RPC throughput (calls per second), broken down by method.
 sum by (method) (rate(gopm_rpc_calls[1m]))
 
-# Top 5 noisiest methods over the last hour
+# Total calls in the last hour per method.
+sum by (method) (increase(gopm_rpc_calls[1h]))
+
+# Top 5 noisiest methods over the last hour.
 topk(5, sum by (method) (increase(gopm_rpc_calls[1h])))
 
 # How often is someone restarting processes via the CLI?
 rate(gopm_rpc_calls{method="restart"}[5m])
+
+# Ratio of write-type RPCs (state-changing) to read-type (list/describe).
+  sum(rate(gopm_rpc_calls{method=~"start|stop|restart|delete|reboot"}[5m]))
+/ sum(rate(gopm_rpc_calls{method=~"list|describe|isrunning|ping"}[5m]))
+
+# Per-host RPC volume (for multi-host setups).
+sum by (host) (rate(gopm_rpc_calls[5m]))
+
+# Alert: a normally-silent method suddenly fires (possible misuse).
+rate(gopm_rpc_calls{method="kill"}[5m]) > 0
 ```
 
 ```sql
+-- Per-method call rate
 SELECT non_negative_derivative(last("calls"), 1m)
   FROM "gopm_rpc" WHERE $timeFilter GROUP BY time(1m), "method"
+
+-- Top methods in the last hour
+SELECT non_negative_derivative(last("calls"), 1h)
+  FROM "gopm_rpc" WHERE $timeFilter GROUP BY "method" ORDER BY time DESC LIMIT 5
 ```
 
 ---
