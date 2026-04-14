@@ -90,6 +90,7 @@ func runRoot(cmd *cobra.Command, args []string) {
 		return
 	}
 	display.RenderProcessList(os.Stdout, procs, false)
+	printVersionMismatchWarning(os.Stdout)
 }
 
 // Execute sets up the root command, registers all subcommands, and runs cobra.

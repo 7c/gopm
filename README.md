@@ -361,6 +361,7 @@ Flags:
   -n, --lines int   Number of lines to show (default: 20)
   -f, --follow      Follow log output in real time (like tail -f)
       --err         Show stderr log only (default: stdout)
+  -a, --all         Show BOTH stdout and stderr, color-tagged and merged by timestamp
   -d, --daemon      Show daemon system log (daemon.log)
 ```
 
@@ -371,10 +372,21 @@ gopm logs api                 # last 20 lines of stdout
 gopm logs api -n 100          # last 100 lines
 gopm logs api -f              # follow live
 gopm logs api --err           # stderr only (includes [gopm] action lines)
+gopm logs api -a              # merged stdout + stderr, color-tagged
+gopm logs api -a -f           # merged stdout + stderr, live
 gopm logs all                 # all processes
+gopm logs all -a              # all processes, both streams merged
 gopm logs                     # auto-selects when single process
 gopm logs -d                  # daemon system log (starts, stops, errors)
 gopm logs -d -f               # follow daemon log live
+```
+
+The `-a` / `--all` flag fetches both stdout and stderr, merges the lines in chronological order (using the ISO-8601 timestamps that the daemon writes at the start of every line), and tags each line with a colored marker — green `[OUT]` for stdout, red `[ERR]` for stderr. It combines with `-f` (follow mode) and works on individual processes or with `all`. When both `-a` and `--err` are passed, `-a` wins.
+
+```
+2026-04-14T13:25:59.595-04:00 [OUT] api ready
+2026-04-14T13:25:59.716-04:00 [ERR] failed to connect to redis: dial tcp: lookup redis...
+2026-04-14T13:25:59.776-04:00 [OUT] retrying in 1s
 ```
 
 Process stderr logs contain `[gopm]`-prefixed action lines showing restarts, exits, and errors. The daemon log (`-d`) shows a unified view of all daemon-level events.
