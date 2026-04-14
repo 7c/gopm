@@ -44,10 +44,12 @@ var listCmd = &cobra.Command{
 
 		if len(procs) == 0 {
 			fmt.Println("No processes running")
+			printVersionMismatchWarning(os.Stdout)
 			return
 		}
 
 		display.RenderProcessList(os.Stdout, procs, listPorts)
+		printVersionMismatchWarning(os.Stdout)
 	},
 }
 

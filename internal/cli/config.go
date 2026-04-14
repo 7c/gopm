@@ -63,11 +63,14 @@ var statusCmd = &cobra.Command{
 				out["telegraf_addr"] = resolved.TelegrafAddr.String()
 				out["telegraf_measurement"] = resolved.TelegrafMeas
 			}
+			out["cli_version"] = Version
 			if daemonPing != nil {
 				out["daemon_pid"] = daemonPing.PID
 				out["daemon_uptime"] = daemonPing.UptimeMs
-			out["daemon_uptime_str"] = daemonPing.Uptime
+				out["daemon_uptime_str"] = daemonPing.Uptime
 				out["daemon_version"] = daemonPing.Version
+				out["version_mismatch"] = Version != "dev" && Version != "" &&
+					daemonPing.Version != "" && daemonPing.Version != Version
 				if daemonPing.ConfigFile != "" {
 					out["daemon_config_file"] = daemonPing.ConfigFile
 					out["daemon_config_source"] = daemonPing.ConfigSource
@@ -94,12 +97,23 @@ var statusCmd = &cobra.Command{
 			} else {
 				fmt.Printf("Daemon using: %s\n", "(defaults, no config file)")
 			}
+			// Highlight the daemon version in red if it differs from the
+			// CLI binary version — stale daemon after a gopm upgrade.
+			daemonVersion := daemonPing.Version
+			if Version != "dev" && Version != "" && daemonVersion != "" && daemonVersion != Version {
+				daemonVersion = display.Red(daemonVersion + " (stale!)")
+			}
 			fmt.Printf("Daemon:       PID %s, uptime %s, version %s\n",
 				display.Cyan(fmt.Sprintf("%d", daemonPing.PID)),
 				display.Bold(daemonPing.Uptime),
-				daemonPing.Version)
+				daemonVersion)
+			fmt.Printf("CLI binary:   version %s\n", Version)
+			if msg := versionMismatchWarning(); msg != "" {
+				fmt.Println(msg)
+			}
 		} else {
 			fmt.Printf("Daemon:       %s\n", display.Dim("(not running)"))
+			fmt.Printf("CLI binary:   version %s\n", Version)
 		}
 		fmt.Println()
 
@@ -173,4 +187,47 @@ func getDaemonPing() *protocol.PingResult {
 		return nil
 	}
 	return &ping
+}
+
+// isVersionMismatch returns true when the CLI binary and daemon versions
+// are both known and differ. Pure function so it's easy to unit-test.
+func isVersionMismatch(cliVersion, daemonVersion string) bool {
+	if cliVersion == "" || cliVersion == "dev" {
+		return false
+	}
+	if daemonVersion == "" {
+		return false
+	}
+	return cliVersion != daemonVersion
+}
+
+// formatVersionMismatchWarning returns a red warning string for the given
+// mismatched version pair. Separated from the live ping for testability.
+func formatVersionMismatchWarning(cliVersion, daemonVersion string) string {
+	return display.Red(fmt.Sprintf(
+		"WARNING: gopm CLI version %s != daemon version %s — restart the daemon to pick up the new binary (gopm reboot)",
+		cliVersion, daemonVersion))
+}
+
+// versionMismatchWarning returns a red warning string if the CLI binary
+// version differs from the running daemon version, or "" if they match or
+// the daemon isn't running. The daemon is queried via tryClient so this
+// never auto-starts a daemon as a side effect.
+func versionMismatchWarning() string {
+	ping := getDaemonPing()
+	if ping == nil {
+		return ""
+	}
+	if !isVersionMismatch(Version, ping.Version) {
+		return ""
+	}
+	return formatVersionMismatchWarning(Version, ping.Version)
+}
+
+// printVersionMismatchWarning prints a version-mismatch warning (if any) to
+// the given writer. Safe to call from any command.
+func printVersionMismatchWarning(w *os.File) {
+	if msg := versionMismatchWarning(); msg != "" {
+		fmt.Fprintln(w, msg)
+	}
 }
