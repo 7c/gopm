@@ -214,6 +214,8 @@ gopm list -p
 
 Non-local listeners (e.g. `tcp@0.0.0.0:3000`) are highlighted in red.
 
+A red WARNING line is appended below the table when the CLI binary version and the running daemon version differ (see [`gopm version`](#gopm-version)).
+
 ### `gopm watch`
 
 Live-updating process table that refreshes at a configurable interval (like `watch` + `gopm list`).
@@ -640,7 +642,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). The GUI is 
 
 ### `gopm status`
 
-Show the resolved configuration, daemon info (PID, uptime, version), and systemd install state.
+Show the resolved configuration, daemon info (PID, uptime, version), the CLI binary version, and systemd install state.
 
 ```
 Usage:
@@ -664,7 +666,8 @@ gopm status --json             # machine-readable output
 ```
 Config file:  /home/deploy/.gopm/gopm.config.json (found)
 Daemon using: /home/deploy/.gopm/gopm.config.json (found)
-Daemon:       PID 1150, uptime 4d 12h, version 0.0.6
+Daemon:       PID 1150, uptime 4d 12h, version 0.0.36
+CLI binary:   version 0.0.36
 
 Logs:
   Directory:    /home/deploy/.gopm/logs
@@ -683,6 +686,48 @@ Systemd:
   Unit file:    /etc/systemd/system/gopm.service
   Installed:    yes
 ```
+
+When the CLI binary version differs from the running daemon version (e.g. after a binary upgrade but before `gopm reboot`), the daemon version is printed in red and a warning line tells you to reboot:
+
+```
+Daemon:       PID 1150, uptime 4d 12h, version 0.0.34 (stale!)
+CLI binary:   version 0.0.36
+WARNING: gopm CLI version 0.0.36 != daemon version 0.0.34 — restart the daemon to pick up the new binary (gopm reboot)
+```
+
+The same warning is also printed by `gopm list` and `gopm version`. In `--json` mode, `gopm status` adds `cli_version` and `version_mismatch` boolean fields so scripts can detect the drift programmatically.
+
+### `gopm version`
+
+Show the CLI binary version and the running daemon version side by side. Useful for verifying that a binary upgrade has actually taken effect.
+
+```
+Usage:
+  gopm version [flags]
+
+Flags:
+  --json    Output as JSON
+```
+
+**Example:**
+
+```
+$ gopm version
+CLI binary:   version 0.0.36
+Daemon:       version 0.0.36 (PID 1150)
+```
+
+```
+$ gopm version --json
+{
+  "cli_version": "0.0.36",
+  "daemon_pid": 1150,
+  "daemon_version": "0.0.36",
+  "version_mismatch": false
+}
+```
+
+When the versions differ, the daemon line shows `(stale!)` in red and the standard WARNING is printed. The legacy `gopm --version` flag is still supported and prints only the CLI version.
 
 ### `gopm pid`
 
