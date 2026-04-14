@@ -1233,87 +1233,221 @@ Set `"telemetry": null` to explicitly disable. Omitting the section entirely als
 
 Metrics are emitted **every 2 seconds**, piggy-backing on the same ticker that samples CPU and memory. Each emission sends one UDP packet containing all lines (one per process + one daemon summary).
 
-### Per-process metrics
+### How metrics are emitted and stored
 
-Measurement: `<measurement>` (e.g. `gopm`)
+- **Cadence:** every **2 seconds** the daemon sends one UDP packet containing one line per managed process, one `<measurement>_daemon` line, and one `<measurement>_rpc` line per RPC method seen so far.
+- **What gopm does NOT do:** gopm does **not** downsample, aggregate, or keep multiple retention tiers itself. There is no "hourly" bucket on the gopm side — everything is a raw sample emitted every 2 seconds. Retention and aggregation are entirely your Telegraf / InfluxDB / VictoriaMetrics config.
+- **VictoriaMetrics ingestion:** when VM ingests the Influx line protocol (`/write` or Telegraf forwarder), each field becomes a separate series named `<measurement>_<field>` with the tags as labels. For example the line `gopm,name=api cpu=1.2,memory=24000 ...` becomes two series: `gopm_cpu{name="api"}` and `gopm_memory{name="api"}`.
+- **Telegraf input:**
+  ```toml
+  [[inputs.socket_listener]]
+    service_address = "udp://127.0.0.1:8094"
+    data_format = "influx"
+  ```
 
-**Tags:**
+### Metric type reference
 
-| Tag | Example | Description |
-|-----|---------|-------------|
-| `name` | `api` | Process name |
-| `id` | `0` | Process ID |
-| `status` | `online` | Current status |
+Every gopm metric falls into one of three classes. Treat aggregation in Grafana/VM accordingly:
 
-**Lifecycle fields (always emitted, regardless of status):**
+| Class | Semantics | Resets on | Use in VM/PromQL | Use in InfluxQL |
+|-------|-----------|-----------|------------------|-----------------|
+| **Gauge** | Instantaneous snapshot (cpu, memory, child_count). Value is meaningful on its own. | Never | `last_over_time(m[5m])`, `avg_over_time(m[5m])`, `max_over_time(m[1h])` | `mean("f")`, `last("f")`, `max("f")` |
+| **Monotonic counter (lifetime)** | Only goes up as events happen (start_count, crash_count, rpc.calls, zombie_detections, state_saves). | Daemon restart | `rate(m[5m])`, `increase(m[1h])` | `non_negative_derivative(last("f"), 1m)` |
+| **Monotonic counter (per-instance)** | Goes up only; **also** resets every time the process is re-`Start()`ed (`log_bytes_written`, `log_rotations`, `uptime`, `memory_peak`). | New `Start()` | `rate(m[5m])` — VM and InfluxQL both drop negative deltas cleanly | `non_negative_derivative(last("f"), 1m)` |
+| **State value** | Single current value where averaging makes no sense (`last_exit_code`, `pid`, `instance`, `in_restart_delay`, `status`). | N/A | `last_over_time(m[5m])` | `last("f")` |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `restarts` | integer | Restart count toward `max_restarts` (resets after `min_uptime`) |
-| `start_count` | integer | Lifetime count of `Start()` calls |
-| `stop_count` | integer | Lifetime count of `Stop()` calls |
-| `crash_count` | integer | Lifetime count of non-zero exits |
-| `user_restart_count` | integer | Lifetime count of `gopm restart` calls |
-| `supervisor_restart_count` | integer | Lifetime count of auto-restarts by the supervisor |
-| `instance` | integer | Incremented each time Start succeeds (used to detect orphan bugs) |
-| `last_exit_code` | integer | Exit code from the most recent exit event |
-| `last_run_duration_ms` | integer | Wall-clock duration of the most recent run, in ms |
-| `restarts_since_reset` | integer | Current bucket toward `max_restarts` |
-| `in_restart_delay` | boolean | True while the supervisor is sleeping before its next restart |
-| `log_bytes_written` | integer | Cumulative bytes written to stdout+stderr log files |
-| `log_rotations` | integer | Cumulative number of log rotation events |
-| `listener_count` | integer | Number of listening sockets this process currently holds |
+Important: all lifetime counters reset to 0 when the daemon restarts, because gopm does not persist them in `dump.json`. Use your timeseries DB's counter-reset-aware function (`rate`, `increase`, `non_negative_derivative`) for rates; use `last_over_time` for the absolute value.
 
-**Online-only fields (added when `status=online`):**
+---
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `pid` | integer | OS process ID |
-| `cpu` | float | CPU usage percentage |
-| `memory` | integer | Resident memory in bytes |
-| `memory_peak` | integer | Peak RSS observed during this instance |
-| `uptime` | integer | Seconds since last start |
-| `child_count` | integer | Total descendant processes in the process tree |
+### Per-process metrics — `gopm`
 
-### Daemon summary metrics
+Measurement: `<measurement>` (default `gopm`). Tags: `name`, `id`, `status`.
 
-Measurement: `<measurement>_daemon` (e.g. `gopm_daemon`)
+Every row below gives the metric name, its type, what it measures, and a copy-pasteable aggregation query for both VictoriaMetrics/PromQL and InfluxQL.
 
-**Tags:**
+#### Resource gauges (online processes only)
 
-| Tag | Example | Description |
-|-----|---------|-------------|
-| `host` | `nyc1` | System hostname |
-
-**Fields:**
+These fields are only written on lines where `status=online`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `processes_total` | integer | Total managed processes |
-| `processes_online` | integer | Currently running |
-| `processes_stopped` | integer | Stopped processes |
-| `processes_errored` | integer | Errored (max restarts hit) |
-| `total_children` | integer | Sum of `child_count` across all managed processes |
-| `daemon_uptime` | integer | Daemon uptime in seconds |
-| `rpc_errors` | integer | Total failed RPC responses |
-| `state_saves` | integer | Total successful `dump.json` persists |
-| `state_save_failures` | integer | Total failed `dump.json` persists |
-| `resurrect_count` | integer | Times the daemon ran the resurrect path |
-| `zombie_detections` | integer | Times `Start()` hit the zombie-cmd safety net (should stay at 0) |
-| `monitor_stales` | integer | Times a monitor goroutine detected it was stale and bailed out |
-| `restart_cancels` | integer | Times `Stop()` cancelled a pending supervisor restart |
+| `pid` | state | OS process ID of the current instance. Changes on every restart. |
+| `cpu` | gauge (%) | CPU usage percent sampled every 2s. 100% = one fully saturated core. |
+| `memory` | gauge (bytes) | Resident set size sampled every 2s. |
+| `memory_peak` | per-instance counter (bytes) | Highest RSS seen **since the last Start()**. Resets on restart. |
+| `uptime` | per-instance counter (seconds) | Seconds since the last Start. Resets on restart. |
+| `child_count` | gauge | Total descendants in the process tree (children, grandchildren, …). On Linux read from `/proc/*/task/*/children`, on Darwin from `ps`. |
 
-### Per-method RPC metrics
+**Aggregation recipes:**
 
-Measurement: `<measurement>_rpc`
+```promql
+# CPU: show the rolling 5-minute average per process
+avg_over_time(gopm_cpu{name="api"}[5m])
 
-**Tags:** `host`, `method` (e.g. `start`, `stop`, `restart`, `list`, …)
+# CPU: show the max spike per process over the last hour
+max_over_time(gopm_cpu{name="api"}[1h])
 
-**Fields:**
+# Memory: current vs. peak — leak detection
+gopm_memory{name="api"}
+max_over_time(gopm_memory_peak{name="api"}[24h])
+
+# Child count — should stay flat; any climb is an orphan bug
+last_over_time(gopm_child_count{name="api"}[5m])
+```
+
+```sql
+-- InfluxQL equivalents
+SELECT mean("cpu")         FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+SELECT mean("memory"),
+       max("memory_peak")  FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+SELECT last("child_count") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+```
+
+#### Lifecycle counters (always emitted)
+
+These fields are written on every line, including `status=stopped` and `status=errored`, so you can track failed-and-left-errored processes too.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `calls` | integer | Total calls received for this method since daemon start |
+| `restarts` | gauge (counter with reset) | Current bucket toward `max_restarts`. Resets to 0 when a run lasts at least `min_uptime`. Best analyzed with `last`/`max` — **not** `rate`. |
+| `restarts_since_reset` | gauge | Snapshot of `restarts` taken when the supervisor enters its restart delay. Useful for "is this process in a crash loop right now?" dashboards. |
+| `start_count` | lifetime counter | Total successful `Start()` calls since the daemon started. |
+| `stop_count` | lifetime counter | Total `Stop()` calls received since the daemon started. |
+| `crash_count` | lifetime counter | Total non-zero exit events since the daemon started. |
+| `user_restart_count` | lifetime counter | Starts initiated by `gopm restart`. |
+| `supervisor_restart_count` | lifetime counter | Auto-restarts initiated by the supervisor after a crash. |
+| `instance` | lifetime counter | Incremented on every successful `Start()`. Jumps in this series indicate restart churn. Also used internally to detect orphan bugs. |
+| `last_exit_code` | state | Exit code of the most recent exit. `0` = clean, any other value = crash. |
+| `last_run_duration_ms` | state (ms) | Wall-clock duration of the most recent run. |
+| `in_restart_delay` | state (0 / 1) | `1` while the supervisor is sleeping before its next restart. Very noisy; useful as an alert condition. |
+| `log_bytes_written` | per-instance counter | Cumulative bytes written to stdout + stderr log files since the last Start. Resets on restart. |
+| `log_rotations` | per-instance counter | Cumulative log rotation events since the last Start. Resets on restart. |
+| `listener_count` | gauge | Number of listening sockets the process currently holds. |
+
+**Aggregation recipes:**
+
+```promql
+# Crash loop detection — crashes per hour, per process
+increase(gopm_crash_count{name="api"}[1h])
+
+# Restart churn — how many Starts happened in the last 5 minutes
+rate(gopm_start_count{name="api"}[5m])
+
+# "Is the process currently in its restart delay?"
+max_over_time(gopm_in_restart_delay{name="api"}[1m]) == 1
+
+# Log write rate (bytes/s) — detect runaway logging
+rate(gopm_log_bytes_written{name="api"}[5m])
+
+# Was this process ever rotating its logs in the last hour?
+increase(gopm_log_rotations{name="api"}[1h]) > 0
+
+# Ratio: how often does the supervisor have to restart this process vs. the user?
+  sum_over_time(gopm_supervisor_restart_count{name="api"}[24h])
+/ sum_over_time(gopm_user_restart_count{name="api"}[24h] offset 0)
+```
+
+```sql
+-- InfluxQL equivalents (use non_negative_derivative to get rates)
+SELECT non_negative_derivative(last("crash_count"), 1h)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT non_negative_derivative(last("start_count"), 5m)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+SELECT last("in_restart_delay")
+  FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+
+SELECT non_negative_derivative(last("log_bytes_written"), 1m)
+  FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+```
+
+---
+
+### Daemon-wide metrics — `gopm_daemon`
+
+Measurement: `<measurement>_daemon` (default `gopm_daemon`). Tag: `host`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `processes_total` | gauge | Total managed processes (online + stopped + errored). |
+| `processes_online` | gauge | Currently running processes. |
+| `processes_stopped` | gauge | Processes in `stopped` state. |
+| `processes_errored` | gauge | Processes that hit `max_restarts` and gave up. |
+| `total_children` | gauge | Sum of `child_count` across all managed processes — catches aggregate orphan bugs. |
+| `daemon_uptime` | per-instance counter (seconds) | Seconds since the daemon started. Resets on daemon restart. A sudden reset = daemon crashed/rebooted. |
+| `rpc_errors` | lifetime counter | Total RPC responses with `success=false`. |
+| `state_saves` | lifetime counter | Total successful `dump.json` writes. |
+| `state_save_failures` | lifetime counter | Failed `dump.json` writes. **Should stay at 0.** |
+| `resurrect_count` | lifetime counter | Times the daemon ran its resurrect path (startup + explicit `gopm resurrect` calls). |
+| `zombie_detections` | lifetime counter | Times `Start()` hit the zombie-cmd safety net. **Should stay at 0** — any increase is a bug. |
+| `monitor_stales` | lifetime counter | Times a monitor goroutine detected it was stale and bailed out. Expected to be small but not necessarily zero. |
+| `restart_cancels` | lifetime counter | Times `Stop()` cancelled a pending supervisor restart. Non-zero means users are racing the supervisor, which is normal. |
+
+**Aggregation recipes:**
+
+```promql
+# Snapshot dashboards
+last_over_time(gopm_daemon_processes_online[5m])
+last_over_time(gopm_daemon_total_children[5m])
+
+# Is the daemon up? daemon_uptime > 0 and climbing
+gopm_daemon_daemon_uptime
+
+# Detect daemon restart — uptime resets to 0
+resets(gopm_daemon_daemon_uptime[1h]) > 0
+
+# Alert: any zombie detection (should never fire)
+increase(gopm_daemon_zombie_detections[5m]) > 0
+
+# Alert: state save failing
+increase(gopm_daemon_state_save_failures[5m]) > 0
+
+# Traffic: RPC error rate per second
+rate(gopm_daemon_rpc_errors[1m])
+```
+
+```sql
+SELECT last("processes_online")  FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
+SELECT last("total_children")    FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
+SELECT non_negative_derivative(last("zombie_detections"), 5m)
+  FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
+SELECT non_negative_derivative(last("rpc_errors"), 1m)
+  FROM "gopm_daemon" WHERE $timeFilter GROUP BY time(1m)
+```
+
+---
+
+### Per-RPC-method metrics — `gopm_rpc`
+
+Measurement: `<measurement>_rpc` (default `gopm_rpc`). Tags: `host`, `method`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `calls` | lifetime counter | Total calls received for this method since the daemon started. |
+
+One series per method — the tag values are the RPC method names: `ping`, `start`, `stop`, `restart`, `delete`, `list`, `describe`, `isrunning`, `logs`, `flush`, `save`, `resurrect`, `kill`, `reboot`, `stats`.
+
+**Aggregation recipes:**
+
+```promql
+# RPC throughput per method (calls per second)
+sum by (method) (rate(gopm_rpc_calls[1m]))
+
+# Top 5 noisiest methods over the last hour
+topk(5, sum by (method) (increase(gopm_rpc_calls[1h])))
+
+# How often is someone restarting processes via the CLI?
+rate(gopm_rpc_calls{method="restart"}[5m])
+```
+
+```sql
+SELECT non_negative_derivative(last("calls"), 1m)
+  FROM "gopm_rpc" WHERE $timeFilter GROUP BY time(1m), "method"
+```
+
+---
 
 ### Example line protocol output
 
@@ -1325,43 +1459,19 @@ gopm_rpc,host=nyc1,method=start calls=4i 1738800000000000000
 gopm_rpc,host=nyc1,method=restart calls=2i 1738800000000000000
 ```
 
-### Telegraf input config
+### Alerts to set up
 
-Add this to your `telegraf.conf`:
+A short list of alerts that catch real production problems:
 
-```toml
-[[inputs.socket_listener]]
-  service_address = "udp://127.0.0.1:8094"
-  data_format = "influx"
-```
-
-### Grafana queries
-
-```sql
--- CPU usage per process over time
-SELECT mean("cpu") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
-
--- Memory usage per process (current + peak RSS for leak detection)
-SELECT mean("memory"), max("memory_peak") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
-
--- Crash loop detection — how many crashes in the last hour per process
-SELECT non_negative_derivative(last("crash_count"), 1h) FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
-
--- Child process count — catches orphaned/leaked children
-SELECT last("child_count") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
-
--- Instance counter jumps indicate the process is being restarted
-SELECT non_negative_derivative(last("instance"), 1h) FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
-
--- Online process count
-SELECT last("processes_online") FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
-
--- Zombie detection safety-net fired (should be 0) — alert on any increase
-SELECT non_negative_derivative(last("zombie_detections"), 5m) FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
-
--- RPC calls per method
-SELECT non_negative_derivative(last("calls"), 1m) FROM "gopm_rpc" WHERE $timeFilter GROUP BY time(1m), "method"
-```
+| Alert | Condition | Why |
+|-------|-----------|-----|
+| Zombie detected | `increase(gopm_daemon_zombie_detections[5m]) > 0` | Should never fire — it means a `Start()` call skipped `Stop()` and left an orphan cmd. |
+| State save failing | `increase(gopm_daemon_state_save_failures[5m]) > 0` | `dump.json` can't be written; resurrect will lose state. |
+| Crash loop | `increase(gopm_crash_count[5m]) > 3` | Process crashed more than three times in 5 minutes. |
+| Stuck in restart delay | `max_over_time(gopm_in_restart_delay[5m]) == 1` for > 2m | Supervisor keeps trying to restart a failing process. |
+| Child count leak | `delta(gopm_child_count[1h]) > 5` | Process tree is growing unexpectedly — orphaned subprocesses. |
+| RPC errors climbing | `rate(gopm_daemon_rpc_errors[5m]) > 0.1` | Daemon is rejecting requests. |
+| Daemon restart | `resets(gopm_daemon_daemon_uptime[1h]) > 0` | The daemon itself crashed or was rebooted. |
 
 ---
 
