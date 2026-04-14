@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 
 	"github.com/7c/gopm/internal/protocol"
 )
@@ -12,6 +13,7 @@ import (
 // autoSave is a convenience wrapper that logs errors from SaveState.
 func (d *Daemon) autoSave(reason string) {
 	if err := d.SaveState(); err != nil {
+		atomic.AddUint64(&d.counters.stateSaveFailures, 1)
 		slog.Error("auto-save failed", "reason", reason, "error", err)
 	}
 }
@@ -28,15 +30,18 @@ func (d *Daemon) SaveState() error {
 
 	data, err := json.MarshalIndent(infos, "", "  ")
 	if err != nil {
+		atomic.AddUint64(&d.counters.stateSaveFailures, 1)
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
 	path := protocol.DumpFilePath()
 	if err := os.WriteFile(path, data, 0644); err != nil {
+		atomic.AddUint64(&d.counters.stateSaveFailures, 1)
 		return fmt.Errorf("write dump file: %w", err)
 	}
 
-	slog.Info("state saved", "path", path, "count", len(infos))
+	atomic.AddUint64(&d.counters.stateSaves, 1)
+	slog.Debug("state saved", "path", path, "count", len(infos))
 	return nil
 }
 
@@ -62,6 +67,7 @@ func LoadState() ([]protocol.ProcessInfo, error) {
 // ResurrectProcesses restores all processes from dump.json.
 // Online processes are started; stopped/errored are registered without starting.
 func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
+	atomic.AddUint64(&d.counters.resurrectCount, 1)
 	infos, err := LoadState()
 	if err != nil {
 		return nil, err
@@ -71,7 +77,7 @@ func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 	for _, info := range infos {
 		if info.Status == protocol.StatusOnline {
 			params := infoToStartParams(info)
-			proc, err := d.startProcess(params)
+			proc, err := d.startProcessWithReason(params, "resurrect")
 			if err != nil {
 				slog.Error("failed to resurrect process", "name", info.Name, "error", err)
 				// Register as errored so the process remains visible and

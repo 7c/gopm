@@ -2,16 +2,26 @@ package daemon
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/7c/gopm/internal/logwriter"
 	"github.com/7c/gopm/internal/protocol"
 )
+
+// zombieDetections is a package-level counter incremented whenever Start()
+// hits the safety-net branch (a previous cmd was unreaped). Read from the
+// Daemon side for telemetry.
+var zombieDetections uint64
+
+// ZombieDetections returns the current value of the zombie counter.
+func ZombieDetections() uint64 { return atomic.LoadUint64(&zombieDetections) }
 
 // Process is the daemon-internal representation of a managed process.
 type Process struct {
@@ -22,6 +32,26 @@ type Process struct {
 	stopping bool
 	stdout   *logwriter.TimestampWriter
 	stderr   *logwriter.TimestampWriter
+
+	// instance is incremented every Start(). Monitor goroutines capture this
+	// at creation time and use it to detect stale restart paths. Atomic so
+	// it can be read without holding p.mu.
+	instance int64
+
+	// cancelRestart, when closed, signals the supervisor restart delay to
+	// abort a pending auto-restart. Replaced on every Start().
+	cancelRestart chan struct{}
+
+	// Lifecycle counters — mirrored into ProcessInfo at Info() time.
+	// Guarded by p.mu.
+	startCount             int
+	stopCount              int
+	crashCount             int
+	userRestartCount       int
+	supervisorRestartCount int
+	memoryPeak             uint64
+	logBytesWritten        int64
+	logRotations           int
 
 	// Metrics tracking
 	lastTicks  uint64
@@ -121,13 +151,58 @@ func (p *Process) Info() protocol.ProcessInfo {
 	if info.Listeners == nil {
 		info.Listeners = []string{}
 	}
+	// Mirror internal counters into the outward-facing struct so they
+	// appear in JSON IPC responses, dump.json, and telegraf emissions.
+	info.StartCount = p.startCount
+	info.StopCount = p.stopCount
+	info.CrashCount = p.crashCount
+	info.UserRestartCount = p.userRestartCount
+	info.SupervisorRestartCount = p.supervisorRestartCount
+	info.Instance = p.instance
+	info.MemoryPeak = p.memoryPeak
+	info.LogBytesWritten = p.logBytesWritten
+	info.LogRotations = p.logRotations
 	return info
 }
 
-// Start launches the process.
-func (p *Process) Start() error {
+// Instance returns the current instance counter (atomic, lock-free).
+func (p *Process) Instance() int64 {
+	return atomic.LoadInt64(&p.instance)
+}
+
+// Start launches the process. reason is a short label describing who
+// initiated the start (e.g. "user-start", "user-restart", "supervisor-restart",
+// "resurrect") and is included in logs.
+func (p *Process) Start(reason string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	prevInstance := p.instance
+	prevPID := p.info.PID
+
+	// Safety net: if p.cmd still has a live underlying OS process that
+	// we never waited on, a previous cleanup path failed to reap it.
+	// This should NOT happen in normal flow: every Start() call is
+	// preceded either by Stop() (which waits for the monitor to reap)
+	// or by a supervisor restart (where the monitor has already reaped
+	// the crashed process). If we hit this branch, log a WARN with
+	// enough context to debug the misbehaving call site.
+	if p.cmd != nil && p.cmd.Process != nil && p.cmd.ProcessState == nil {
+		atomic.AddUint64(&zombieDetections, 1)
+		zombiePID := p.cmd.Process.Pid
+		slog.Warn("UNEXPECTED: zombie cmd at Start — a caller skipped Stop() or a monitor never ran",
+			"name", p.info.Name, "reason", reason,
+			"zombie_pid", zombiePID, "prev_instance", prevInstance)
+		// Best effort: kill the whole process group. The existing monitor
+		// (if any) will reap it when cmd.Wait() returns. If there is no
+		// monitor, this process will stay as a zombie until the daemon
+		// dies — but it cannot accumulate: subsequent Start() calls hit
+		// this same branch and the WARN above will fire each time.
+		if err := syscall.Kill(-zombiePID, syscall.SIGKILL); err != nil {
+			slog.Warn("failed to kill zombie process group",
+				"name", p.info.Name, "zombie_pid", zombiePID, "error", err)
+		}
+	}
 
 	// Ensure log directory exists
 	os.MkdirAll(filepath.Dir(p.info.LogOut), 0755)
@@ -172,27 +247,68 @@ func (p *Process) Start() error {
 	if err := cmd.Start(); err != nil {
 		p.stdout.Underlying().Close()
 		p.stderr.Underlying().Close()
+		slog.Error("cmd.Start failed",
+			"name", p.info.Name, "reason", reason, "error", err)
 		return fmt.Errorf("start process: %w", err)
 	}
 
+	atomic.AddInt64(&p.instance, 1)
 	p.cmd = cmd
 	p.exitCh = make(chan struct{})
+	p.cancelRestart = make(chan struct{})
 	p.stopping = false
 	p.info.PID = cmd.Process.Pid
 	p.info.Status = protocol.StatusOnline
 	p.info.StatusReason = ""
 	p.info.Uptime = time.Now()
+	p.info.InRestartDelay = false
 	p.lastSample = time.Now()
 	p.lastTicks = 0
+	p.memoryPeak = 0 // reset peak for new instance
+
+	// Lifecycle counters.
+	p.startCount++
+	switch reason {
+	case "user-restart":
+		p.userRestartCount++
+	case "supervisor-restart":
+		p.supervisorRestartCount++
+	}
+
+	slog.Info("process started",
+		"name", p.info.Name, "reason", reason,
+		"new_pid", p.info.PID, "instance", p.instance,
+		"prev_pid", prevPID, "prev_instance", prevInstance)
 
 	return nil
 }
 
-// Stop sends SIGTERM then SIGKILL after timeout.
+// Stop sends SIGTERM then SIGKILL after timeout. If the process is currently
+// in the supervisor restart-delay window (status != Online but a supervisor
+// goroutine is waiting to restart), Stop also cancels the pending restart.
 func (p *Process) Stop() error {
 	p.mu.Lock()
+	p.stopCount++
+
+	// Always cancel any pending supervisor restart. Doing this first ensures
+	// that even if the process is already "stopped" from the supervisor's
+	// point of view, the upcoming Start() call gets aborted.
+	if p.cancelRestart != nil {
+		select {
+		case <-p.cancelRestart:
+			// already cancelled/closed
+		default:
+			close(p.cancelRestart)
+			slog.Info("cancelled pending supervisor restart",
+				"name", p.info.Name, "instance", p.instance)
+		}
+	}
+
 	if p.info.Status != protocol.StatusOnline || p.cmd == nil {
+		status := p.info.Status
 		p.mu.Unlock()
+		slog.Debug("Stop called but process not Online, no kill needed",
+			"name", p.info.Name, "status", status)
 		return nil
 	}
 	p.stopping = true
@@ -200,6 +316,7 @@ func (p *Process) Stop() error {
 	exitCh := p.exitCh
 	killTimeout := p.info.RestartPolicy.KillTimeout.Duration
 	killSignal := p.info.RestartPolicy.KillSignal
+	instance := p.instance
 	p.mu.Unlock()
 
 	if killTimeout == 0 {
@@ -209,14 +326,22 @@ func (p *Process) Stop() error {
 		killSignal = int(syscall.SIGTERM)
 	}
 
+	slog.Info("Stop sending signal to process group",
+		"name", p.info.Name, "pid", pid, "signal", killSignal,
+		"instance", instance, "kill_timeout", killTimeout)
+
 	// Send kill signal to process group
 	syscall.Kill(-pid, syscall.Signal(killSignal))
 
 	select {
 	case <-exitCh:
+		slog.Info("Stop: process exited cleanly",
+			"name", p.info.Name, "pid", pid, "instance", instance)
 		return nil
 	case <-time.After(killTimeout):
 		// Escalate to SIGKILL
+		slog.Warn("Stop: kill timeout expired, escalating to SIGKILL",
+			"name", p.info.Name, "pid", pid, "instance", instance)
 		syscall.Kill(-pid, syscall.SIGKILL)
 		<-exitCh
 		return nil

@@ -53,3 +53,35 @@ func processExists(pid int) bool {
 	_, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
 	return err == nil
 }
+
+// countDescendants returns the total number of descendant processes of pid
+// (direct children, grandchildren, etc). On Linux, this is done via
+// /proc/<pid>/task/<tid>/children which lists direct children per task.
+func countDescendants(pid int) int {
+	total := 0
+	var walk func(int)
+	walk = func(parent int) {
+		taskDir := fmt.Sprintf("/proc/%d/task", parent)
+		entries, err := os.ReadDir(taskDir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			childrenPath := fmt.Sprintf("/proc/%d/task/%s/children", parent, e.Name())
+			data, err := os.ReadFile(childrenPath)
+			if err != nil {
+				continue
+			}
+			for _, f := range strings.Fields(string(data)) {
+				cpid, err := strconv.Atoi(f)
+				if err != nil {
+					continue
+				}
+				total++
+				walk(cpid)
+			}
+		}
+	}
+	walk(pid)
+	return total
+}

@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"log/slog"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/7c/gopm/internal/protocol"
+	"github.com/7c/gopm/internal/telemetry"
 )
 
 const (
@@ -53,8 +55,30 @@ func (d *Daemon) sampleMetrics() {
 					continue
 				}
 
+				childCount := countDescendants(pid)
+
+				// Snapshot log stats before taking p.mu (writers have their own lock).
+				var logBytes int64
+				var logRotations int
+				if p.stdout != nil {
+					b, r := p.stdout.Underlying().Stats()
+					logBytes += b
+					logRotations += r
+				}
+				if p.stderr != nil {
+					b, r := p.stderr.Underlying().Stats()
+					logBytes += b
+					logRotations += r
+				}
+
 				p.mu.Lock()
 				p.info.Memory = rss
+				if rss > p.memoryPeak {
+					p.memoryPeak = rss
+				}
+				p.info.ChildCount = childCount
+				p.logBytesWritten = logBytes
+				p.logRotations = logRotations
 
 				// CPU calculation
 				now := time.Now()
@@ -78,8 +102,23 @@ func (d *Daemon) sampleMetrics() {
 				for _, proc := range d.processes {
 					infos = append(infos, proc.Info())
 				}
+				// Snapshot RPC call map (guarded by d.mu).
+				rpcCallsCopy := make(map[string]uint64, len(d.counters.rpcCallsByMethod))
+				for k, v := range d.counters.rpcCallsByMethod {
+					rpcCallsCopy[k] = v
+				}
 				d.mu.RUnlock()
-				d.telegraf.Emit(infos, time.Since(d.startTime))
+				dc := telemetry.DaemonCounters{
+					RPCCallsByMethod:  rpcCallsCopy,
+					RPCErrors:         atomic.LoadUint64(&d.counters.rpcErrors),
+					StateSaves:        atomic.LoadUint64(&d.counters.stateSaves),
+					StateSaveFailures: atomic.LoadUint64(&d.counters.stateSaveFailures),
+					ResurrectCount:    atomic.LoadUint64(&d.counters.resurrectCount),
+					ZombieDetections:  ZombieDetections(),
+					MonitorStales:     atomic.LoadUint64(&d.counters.monitorStales),
+					RestartCancels:    atomic.LoadUint64(&d.counters.restartCancels),
+				}
+				d.telegraf.Emit(infos, time.Since(d.startTime), dc)
 			}
 
 			// Capture time-series snapshots every snapshotInterval ticks (60s).

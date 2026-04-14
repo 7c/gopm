@@ -959,6 +959,25 @@ gopm start ./api --name api \
   --max-log-size 5M
 ```
 
+### Daemon log (daemon.log)
+
+The daemon writes its own structured log to `~/.gopm/daemon.log` (path honors `GOPM_HOME`). It captures every lifecycle event — process starts, stops, exits, supervisor restart decisions, RPC errors, telemetry, state saves, zombie detection, and monitor goroutine activity.
+
+**Default log level is `debug`.** This is intentional: enough context to diagnose crash loops and orphaned-child issues without requiring a redeploy. Override with `--log-level` when spawning the daemon:
+
+| Value | Meaning |
+|-------|---------|
+| `debug` | Default. Every lifecycle event, including internal restart-policy decisions. |
+| `info` | Lifecycle events at a higher granularity (starts, stops, restarts, exits). |
+| `warn` | Only warnings — stale monitors, kill-timeout escalations, zombie detections. |
+| `error` | Only error conditions (RPC errors, start failures). |
+
+The legacy `--debug` flag is still accepted and equivalent to `--log-level=debug`.
+
+Every log line tagged with a process includes a `reason` (e.g. `user-start`, `user-restart`, `supervisor-restart`, `resurrect`) and an `instance` counter that is bumped on every successful `Start()`. An `instance` that jumps without a corresponding `reason` is a strong signal of a supervisor/handleRestart race.
+
+Read it via `gopm logs -d` (or `-d -f` to follow live).
+
 ---
 
 ## Systemd Integration
@@ -1169,21 +1188,35 @@ Measurement: `<measurement>` (e.g. `gopm`)
 | `id` | `0` | Process ID |
 | `status` | `online` | Current status |
 
-**Fields (online processes):**
+**Lifecycle fields (always emitted, regardless of status):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `restarts` | integer | Restart count toward `max_restarts` (resets after `min_uptime`) |
+| `start_count` | integer | Lifetime count of `Start()` calls |
+| `stop_count` | integer | Lifetime count of `Stop()` calls |
+| `crash_count` | integer | Lifetime count of non-zero exits |
+| `user_restart_count` | integer | Lifetime count of `gopm restart` calls |
+| `supervisor_restart_count` | integer | Lifetime count of auto-restarts by the supervisor |
+| `instance` | integer | Incremented each time Start succeeds (used to detect orphan bugs) |
+| `last_exit_code` | integer | Exit code from the most recent exit event |
+| `last_run_duration_ms` | integer | Wall-clock duration of the most recent run, in ms |
+| `restarts_since_reset` | integer | Current bucket toward `max_restarts` |
+| `in_restart_delay` | boolean | True while the supervisor is sleeping before its next restart |
+| `log_bytes_written` | integer | Cumulative bytes written to stdout+stderr log files |
+| `log_rotations` | integer | Cumulative number of log rotation events |
+| `listener_count` | integer | Number of listening sockets this process currently holds |
+
+**Online-only fields (added when `status=online`):**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `pid` | integer | OS process ID |
 | `cpu` | float | CPU usage percentage |
 | `memory` | integer | Resident memory in bytes |
-| `restarts` | integer | Total restart count |
+| `memory_peak` | integer | Peak RSS observed during this instance |
 | `uptime` | integer | Seconds since last start |
-
-**Fields (stopped/errored processes):**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `restarts` | integer | Total restart count |
+| `child_count` | integer | Total descendant processes in the process tree |
 
 ### Daemon summary metrics
 
@@ -1203,15 +1236,36 @@ Measurement: `<measurement>_daemon` (e.g. `gopm_daemon`)
 | `processes_online` | integer | Currently running |
 | `processes_stopped` | integer | Stopped processes |
 | `processes_errored` | integer | Errored (max restarts hit) |
+| `total_children` | integer | Sum of `child_count` across all managed processes |
 | `daemon_uptime` | integer | Daemon uptime in seconds |
+| `rpc_errors` | integer | Total failed RPC responses |
+| `state_saves` | integer | Total successful `dump.json` persists |
+| `state_save_failures` | integer | Total failed `dump.json` persists |
+| `resurrect_count` | integer | Times the daemon ran the resurrect path |
+| `zombie_detections` | integer | Times `Start()` hit the zombie-cmd safety net (should stay at 0) |
+| `monitor_stales` | integer | Times a monitor goroutine detected it was stale and bailed out |
+| `restart_cancels` | integer | Times `Stop()` cancelled a pending supervisor restart |
+
+### Per-method RPC metrics
+
+Measurement: `<measurement>_rpc`
+
+**Tags:** `host`, `method` (e.g. `start`, `stop`, `restart`, `list`, …)
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `calls` | integer | Total calls received for this method since daemon start |
 
 ### Example line protocol output
 
 ```
-gopm,name=api,id=0,status=online pid=4521i,cpu=1.200000,memory=25296896i,restarts=0i,uptime=3600i 1738800000000000000
-gopm,name=worker,id=1,status=online pid=4523i,cpu=12.100000,memory=134742016i,restarts=3i,uptime=2700i 1738800000000000000
-gopm,name=cron,id=2,status=stopped restarts=0i 1738800000000000000
-gopm_daemon,host=nyc1 processes_total=3i,processes_online=2i,processes_stopped=1i,processes_errored=0i,daemon_uptime=86400i 1738800000000000000
+gopm,name=api,id=0,status=online pid=4521i,cpu=1.200000,memory=25296896i,memory_peak=31457280i,uptime=3600i,child_count=0i,restarts=0i,start_count=1i,stop_count=0i,crash_count=0i,user_restart_count=0i,supervisor_restart_count=0i,instance=1i,last_exit_code=0i,last_run_duration_ms=0i,restarts_since_reset=0i,in_restart_delay=false,log_bytes_written=4096i,log_rotations=0i,listener_count=1i 1738800000000000000
+gopm,name=cron,id=2,status=stopped restarts=0i,start_count=1i,stop_count=1i,crash_count=0i,user_restart_count=0i,supervisor_restart_count=0i,instance=1i,last_exit_code=0i,last_run_duration_ms=600000i,restarts_since_reset=0i,in_restart_delay=false,log_bytes_written=2048i,log_rotations=0i,listener_count=0i 1738800000000000000
+gopm_daemon,host=nyc1 processes_total=3i,processes_online=2i,processes_stopped=1i,processes_errored=0i,total_children=12i,daemon_uptime=86400i,rpc_errors=0i,state_saves=42i,state_save_failures=0i,resurrect_count=1i,zombie_detections=0i,monitor_stales=0i,restart_cancels=3i 1738800000000000000
+gopm_rpc,host=nyc1,method=start calls=4i 1738800000000000000
+gopm_rpc,host=nyc1,method=restart calls=2i 1738800000000000000
 ```
 
 ### Telegraf input config
@@ -1230,14 +1284,26 @@ Add this to your `telegraf.conf`:
 -- CPU usage per process over time
 SELECT mean("cpu") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 
--- Memory usage per process
-SELECT mean("memory") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+-- Memory usage per process (current + peak RSS for leak detection)
+SELECT mean("memory"), max("memory_peak") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
 
--- Restart count over time (detect crash loops)
-SELECT max("restarts") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+-- Crash loop detection — how many crashes in the last hour per process
+SELECT non_negative_derivative(last("crash_count"), 1h) FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
+
+-- Child process count — catches orphaned/leaked children
+SELECT last("child_count") FROM "gopm" WHERE $timeFilter GROUP BY time($__interval), "name"
+
+-- Instance counter jumps indicate the process is being restarted
+SELECT non_negative_derivative(last("instance"), 1h) FROM "gopm" WHERE $timeFilter GROUP BY time(1m), "name"
 
 -- Online process count
 SELECT last("processes_online") FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
+
+-- Zombie detection safety-net fired (should be 0) — alert on any increase
+SELECT non_negative_derivative(last("zombie_detections"), 5m) FROM "gopm_daemon" WHERE $timeFilter GROUP BY time($__interval)
+
+-- RPC calls per method
+SELECT non_negative_derivative(last("calls"), 1m) FROM "gopm_rpc" WHERE $timeFilter GROUP BY time(1m), "method"
 ```
 
 ---

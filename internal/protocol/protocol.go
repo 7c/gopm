@@ -124,6 +124,33 @@ type ProcessInfo struct {
 	LogOut        string            `json:"log_out"`
 	LogErr        string            `json:"log_err"`
 	MaxLogSize    int64             `json:"max_log_size"`
+
+	// Lifecycle counters — incremented over the process lifetime, useful
+	// for detecting crash loops and orphaning bugs from telemetry alone.
+	StartCount             int   `json:"start_count"`
+	StopCount              int   `json:"stop_count"`
+	CrashCount             int   `json:"crash_count"`
+	UserRestartCount       int   `json:"user_restart_count"`
+	SupervisorRestartCount int   `json:"supervisor_restart_count"`
+	Instance               int64 `json:"instance"`
+
+	// Last-exit details from the most recent exit event.
+	LastExitCode    int   `json:"last_exit_code"`
+	LastRunDuration int64 `json:"last_run_duration_ms"`
+
+	// Restart state machine.
+	InRestartDelay       bool `json:"in_restart_delay"`
+	RestartsSinceReset   int  `json:"restarts_since_reset"`
+
+	// Memory peak RSS since Start (bytes), to detect leaks over time.
+	MemoryPeak uint64 `json:"memory_peak"`
+
+	// Child count — total descendant processes (not just direct children).
+	ChildCount int `json:"child_count"`
+
+	// Log bytes written & rotations observed since Start.
+	LogBytesWritten int64 `json:"log_bytes_written"`
+	LogRotations    int   `json:"log_rotations"`
 }
 
 // StartParams are the parameters for the "start" method.

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,6 +25,50 @@ import (
 // Version is set at build time.
 var Version = "dev"
 
+// parseLogLevel resolves the daemon log level. Default is Debug; --log-level
+// can override with info|warn|error. The legacy --debug flag forces Debug.
+func parseLogLevel(arg string, legacyDebug bool) slog.Level {
+	if legacyDebug {
+		return slog.LevelDebug
+	}
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "", "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error", "err":
+		return slog.LevelError
+	default:
+		return slog.LevelDebug
+	}
+}
+
+func logLevelSource(arg string, legacyDebug bool) string {
+	if legacyDebug {
+		return "--debug"
+	}
+	if arg == "" {
+		return "default"
+	}
+	return "--log-level"
+}
+
+// daemonCounters tracks daemon-wide lifecycle and RPC counters. All fields
+// are accessed atomically via sync/atomic where possible, or under
+// Daemon.mu for the map.
+type daemonCounters struct {
+	rpcCallsByMethod  map[string]uint64 // guarded by Daemon.mu
+	rpcErrors         uint64            // atomic
+	stateSaves        uint64            // atomic
+	stateSaveFailures uint64            // atomic
+	resurrectCount    uint64            // atomic
+	zombieDetections  uint64            // atomic
+	monitorStales     uint64            // atomic
+	restartCancels    uint64            // atomic
+}
+
 // Daemon manages child processes and handles CLI requests.
 type Daemon struct {
 	mu        sync.RWMutex
@@ -33,6 +78,8 @@ type Daemon struct {
 	startTime time.Time
 	stopCh    chan struct{}
 	home      string
+
+	counters daemonCounters
 
 	mcpServer    *mcphttp.Server
 	telegraf     *telemetry.TelegrafEmitter
@@ -44,7 +91,9 @@ type Daemon struct {
 }
 
 // Run starts the daemon. This is the main entry point for daemon mode.
-func Run(version string, configFlag string, debug bool) {
+// logLevelArg is the --log-level argument value. Empty string selects the
+// default (debug). The legacy debug bool is preserved for backward compat.
+func Run(version string, configFlag string, debug bool, logLevelArg string) {
 	Version = version
 	home := protocol.GopmHome()
 	os.MkdirAll(home, 0755)
@@ -64,19 +113,21 @@ func Run(version string, configFlag string, debug bool) {
 	// Ensure log directory exists (may come from config)
 	os.MkdirAll(resolved.LogDir, 0755)
 
-	// Set up logging to a file
+	// Set up logging to a file. Default is Debug so production daemons
+	// capture enough context to diagnose issues without a redeploy.
+	// Override via --log-level (info|warn|error). Legacy --debug is a
+	// no-op now since debug is the default.
 	logPath := filepath.Join(home, "daemon.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot open log file: %v\n", err)
 		os.Exit(1)
 	}
-	logLevel := slog.LevelInfo
-	if debug {
-		logLevel = slog.LevelDebug
-	}
+	logLevel := parseLogLevel(logLevelArg, debug)
 	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
+	slog.Info("log level set", "level", logLevel.String(),
+		"source", logLevelSource(logLevelArg, debug))
 
 	// Log config warnings
 	for _, w := range warnings {
@@ -99,6 +150,9 @@ func Run(version string, configFlag string, debug bool) {
 		resolved:     resolved,
 		configPath:   result.Path,
 		configSource: result.Source,
+		counters: daemonCounters{
+			rpcCallsByMethod: make(map[string]uint64),
+		},
 	}
 
 	// Print startup banner
@@ -282,40 +336,49 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 }
 
 func (d *Daemon) handleRequest(req protocol.Request) protocol.Response {
+	d.mu.Lock()
+	d.counters.rpcCallsByMethod[req.Method]++
+	d.mu.Unlock()
+
+	var resp protocol.Response
 	switch req.Method {
 	case protocol.MethodPing:
-		return d.handlePing()
+		resp = d.handlePing()
 	case protocol.MethodStart:
-		return d.handleStart(req.Params)
+		resp = d.handleStart(req.Params)
 	case protocol.MethodStop:
-		return d.handleStop(req.Params)
+		resp = d.handleStop(req.Params)
 	case protocol.MethodRestart:
-		return d.handleRestart(req.Params)
+		resp = d.handleRestart(req.Params)
 	case protocol.MethodDelete:
-		return d.handleDelete(req.Params)
+		resp = d.handleDelete(req.Params)
 	case protocol.MethodList:
-		return d.handleList()
+		resp = d.handleList()
 	case protocol.MethodDescribe:
-		return d.handleDescribe(req.Params)
+		resp = d.handleDescribe(req.Params)
 	case protocol.MethodIsRunning:
-		return d.handleIsRunning(req.Params)
+		resp = d.handleIsRunning(req.Params)
 	case protocol.MethodLogs:
-		return d.handleLogs(req.Params)
+		resp = d.handleLogs(req.Params)
 	case protocol.MethodFlush:
-		return d.handleFlush(req.Params)
+		resp = d.handleFlush(req.Params)
 	case protocol.MethodSave:
-		return d.handleSave()
+		resp = d.handleSave()
 	case protocol.MethodResurrect:
-		return d.handleResurrect()
+		resp = d.handleResurrect()
 	case protocol.MethodKill:
-		return d.handleKill()
+		resp = d.handleKill()
 	case protocol.MethodReboot:
-		return d.handleReboot()
+		resp = d.handleReboot()
 	case protocol.MethodStats:
-		return d.handleStats(req.Params)
+		resp = d.handleStats(req.Params)
 	default:
-		return errorResponse(fmt.Sprintf("unknown method: %s", req.Method))
+		resp = errorResponse(fmt.Sprintf("unknown method: %s", req.Method))
 	}
+	if !resp.Success {
+		atomic.AddUint64(&d.counters.rpcErrors, 1)
+	}
+	return resp
 }
 
 func (d *Daemon) handlePing() protocol.Response {
@@ -350,6 +413,10 @@ func (d *Daemon) handleStart(params json.RawMessage) protocol.Response {
 }
 
 func (d *Daemon) startProcess(params protocol.StartParams) (*Process, error) {
+	return d.startProcessWithReason(params, "user-start")
+}
+
+func (d *Daemon) startProcessWithReason(params protocol.StartParams, reason string) (*Process, error) {
 	d.mu.Lock()
 
 	name := params.Name
@@ -369,7 +436,7 @@ func (d *Daemon) startProcess(params protocol.StartParams) (*Process, error) {
 
 	proc := NewProcess(id, params)
 
-	if err := proc.Start(); err != nil {
+	if err := proc.Start(reason); err != nil {
 		return nil, err
 	}
 
@@ -381,7 +448,8 @@ func (d *Daemon) startProcess(params protocol.StartParams) (*Process, error) {
 
 	go d.monitor(proc)
 
-	slog.Info("process started", "name", proc.info.Name, "pid", proc.info.PID, "id", id)
+	slog.Info("startProcess: process registered",
+		"name", proc.info.Name, "pid", proc.info.PID, "id", id, "reason", reason)
 	return proc, nil
 }
 
@@ -428,7 +496,7 @@ func (d *Daemon) handleRestart(params json.RawMessage) protocol.Response {
 		p.mu.Unlock()
 
 		p.CloseLogWriters()
-		if err := p.Start(); err != nil {
+		if err := p.Start("user-restart"); err != nil {
 			slog.Error("failed to restart process", "name", p.info.Name, "error", err)
 			continue
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/7c/gopm/internal/client"
 	"github.com/7c/gopm/internal/daemon"
@@ -97,6 +98,7 @@ func Execute() {
 	isDaemon := false
 	daemonDebug := false
 	daemonConfigFlag := ""
+	daemonLogLevel := ""
 	for i, arg := range os.Args[1:] {
 		if arg == "--daemon" {
 			isDaemon = true
@@ -107,9 +109,15 @@ func Execute() {
 		if arg == "--config" && i+1 < len(os.Args[1:]) {
 			daemonConfigFlag = os.Args[i+2]
 		}
+		if arg == "--log-level" && i+1 < len(os.Args[1:]) {
+			daemonLogLevel = os.Args[i+2]
+		}
+		if strings.HasPrefix(arg, "--log-level=") {
+			daemonLogLevel = strings.TrimPrefix(arg, "--log-level=")
+		}
 	}
 	if isDaemon {
-		daemon.Run(Version, daemonConfigFlag, daemonDebug)
+		daemon.Run(Version, daemonConfigFlag, daemonDebug, daemonLogLevel)
 		return // never reached; daemon.Run calls os.Exit
 	}
 

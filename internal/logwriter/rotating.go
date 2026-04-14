@@ -9,12 +9,21 @@ import (
 
 // RotatingWriter implements io.Writer with size-based log rotation.
 type RotatingWriter struct {
-	path     string
-	maxSize  int64
-	maxFiles int
-	current  *os.File
-	written  int64
-	mu       sync.Mutex
+	path         string
+	maxSize      int64
+	maxFiles     int
+	current      *os.File
+	written      int64
+	totalWritten int64 // cumulative bytes written since writer creation
+	rotations    int   // number of rotation events since creation
+	mu           sync.Mutex
+}
+
+// Stats returns cumulative write statistics.
+func (w *RotatingWriter) Stats() (totalBytes int64, rotations int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.totalWritten, w.rotations
 }
 
 // New creates a new RotatingWriter. maxSize is in bytes, maxFiles is the number
@@ -60,10 +69,12 @@ func (w *RotatingWriter) Write(p []byte) (int, error) {
 		if err := w.rotate(); err != nil {
 			return 0, err
 		}
+		w.rotations++
 	}
 
 	n, err := w.current.Write(p)
 	w.written += int64(n)
+	w.totalWritten += int64(n)
 	return n, err
 }
 
