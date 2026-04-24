@@ -360,28 +360,25 @@ Usage:
 Flags:
   -n, --lines int   Number of lines to show (default: 20)
   -f, --follow      Follow log output in real time (like tail -f)
-      --err         Show stderr log only (default: stdout)
-  -a, --all         Show BOTH stdout and stderr, color-tagged and merged by timestamp
+      --err         Show stderr only (default: merged stdout+stderr)
   -d, --daemon      Show daemon system log (daemon.log)
 ```
 
 **Examples:**
 
 ```bash
-gopm logs api                 # last 20 lines of stdout
-gopm logs api -n 100          # last 100 lines
-gopm logs api -f              # follow live
+gopm logs api                 # last 20 lines, stdout+stderr merged and color-tagged
+gopm logs api -n 100          # last 100 lines, merged
+gopm logs api -f              # follow live (merged)
 gopm logs api --err           # stderr only (includes [gopm] action lines)
-gopm logs api -a              # merged stdout + stderr, color-tagged
-gopm logs api -a -f           # merged stdout + stderr, live
-gopm logs all                 # all processes
-gopm logs all -a              # all processes, both streams merged
+gopm logs all                 # all processes, merged streams
+gopm logs all --err           # all processes, stderr only
 gopm logs                     # auto-selects when single process
 gopm logs -d                  # daemon system log (starts, stops, errors)
 gopm logs -d -f               # follow daemon log live
 ```
 
-The `-a` / `--all` flag fetches both stdout and stderr, merges the lines in chronological order (using the ISO-8601 timestamps that the daemon writes at the start of every line), and tags each line with a colored marker — green `[OUT]` for stdout, red `[ERR]` for stderr. It combines with `-f` (follow mode) and works on individual processes or with `all`. When both `-a` and `--err` are passed, `-a` wins.
+By default, `gopm logs` fetches both stdout and stderr, merges lines in chronological order (using the ISO-8601 timestamps the daemon writes at the start of every line), and tags each line with a colored marker — green `[OUT]` for stdout, red `[ERR]` for stderr. It combines with `-f` (follow mode) and works on individual processes or with `all`. Pass `--err` to show stderr only.
 
 ```
 2026-04-14T13:25:59.595-04:00 [OUT] api ready

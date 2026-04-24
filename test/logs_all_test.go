@@ -7,8 +7,74 @@ import (
 	"time"
 )
 
-// TestLogsAllFlag verifies `gopm logs -a` returns both stdout and stderr
-// content, each tagged with its stream marker, merged in chronological order.
+// TestLogsDefaultShowsBothStreams verifies that plain `gopm logs <name>`
+// (no flags) returns both stdout and stderr content, each tagged with its
+// stream marker, merged in chronological order. This is the default behavior.
+func TestLogsDefaultShowsBothStreams(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin,
+		"--name", "dual-default",
+		"--",
+		"--stdout-every", "50ms",
+		"--stderr-every", "60ms",
+		"--stdout-msg", "hello-stdout",
+		"--stderr-msg", "hello-stderr",
+	)
+	env.WaitForStatus("dual-default", "online", 5*time.Second)
+	time.Sleep(1200 * time.Millisecond)
+
+	out := env.MustGopm("logs", "dual-default", "-n", "50")
+	clean := stripANSI(out)
+
+	if !strings.Contains(clean, "[OUT]") {
+		t.Errorf("default logs missing [OUT] marker:\n%s", clean)
+	}
+	if !strings.Contains(clean, "[ERR]") {
+		t.Errorf("default logs missing [ERR] marker:\n%s", clean)
+	}
+	if !strings.Contains(clean, "hello-stdout") {
+		t.Errorf("default logs missing stdout body:\n%s", clean)
+	}
+	if !strings.Contains(clean, "hello-stderr") {
+		t.Errorf("default logs missing stderr body:\n%s", clean)
+	}
+}
+
+// TestLogsErrFlagStderrOnly verifies `gopm logs --err` returns stderr only,
+// and never includes stdout content.
+func TestLogsErrFlagStderrOnly(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin,
+		"--name", "erronly",
+		"--",
+		"--stdout-every", "50ms",
+		"--stderr-every", "60ms",
+		"--stdout-msg", "only-out",
+		"--stderr-msg", "only-err",
+	)
+	env.WaitForStatus("erronly", "online", 5*time.Second)
+	time.Sleep(1000 * time.Millisecond)
+
+	out := env.MustGopm("logs", "erronly", "--err", "-n", "50")
+	clean := stripANSI(out)
+
+	if !strings.Contains(clean, "only-err") {
+		t.Errorf("--err output missing stderr body:\n%s", clean)
+	}
+	if strings.Contains(clean, "only-out") {
+		t.Errorf("--err output must not include stdout body:\n%s", clean)
+	}
+	// --err uses single-stream flow, no [OUT]/[ERR] markers.
+	if strings.Contains(clean, "[OUT]") {
+		t.Errorf("--err output should not have [OUT] marker:\n%s", clean)
+	}
+}
+
+// TestLogsAllFlag verifies `gopm logs -a` (kept as compatibility alias)
+// returns both stdout and stderr content, each tagged with its stream marker,
+// merged in chronological order.
 func TestLogsAllFlag(t *testing.T) {
 	env := NewTestEnv(t)
 

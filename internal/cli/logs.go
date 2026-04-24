@@ -25,11 +25,15 @@ var logsCmd = &cobra.Command{
 	Long: `Display recent log output for a process or all processes.
 
 Each log line is prefixed with an ISO-8601 timestamp by the daemon.
+By default, BOTH stdout and stderr are merged in chronological order
+and tagged with colored [OUT] / [ERR] markers. Use --err to see
+stderr only.
+
 Use "all" as the target to display logs from every managed process,
 with a header separating each process.
 
 If only one process is managed, the target can be omitted.`,
-	Example: `  # Show last 20 lines of stdout (default)
+	Example: `  # Show last 20 lines, both stdout+stderr merged (default)
   gopm logs my-api
 
   # Show last 100 lines
@@ -38,14 +42,10 @@ If only one process is managed, the target can be omitted.`,
   # Follow log output in real-time (like tail -f)
   gopm logs my-api -f
 
-  # Show stderr instead of stdout
+  # Show stderr ONLY
   gopm logs my-api --err
 
-  # Show BOTH stdout and stderr, color-tagged and merged by timestamp
-  gopm logs my-api -a
-  gopm logs my-api -a -f
-
-  # Show logs from all processes
+  # Show logs from all processes (both streams merged)
   gopm logs all
   gopm logs all -n 10 --err
 
@@ -71,9 +71,10 @@ func init() {
 	f := logsCmd.Flags()
 	f.IntVarP(&logsLines, "lines", "n", 20, "number of lines to display")
 	f.BoolVarP(&logsFollow, "follow", "f", false, "follow log output")
-	f.BoolVar(&logsErr, "err", false, "show only error log")
-	f.BoolVarP(&logsAll, "all", "a", false, "show BOTH stdout and stderr, color-tagged and merged by timestamp")
+	f.BoolVar(&logsErr, "err", false, "show stderr only (default: merged stdout+stderr)")
+	f.BoolVarP(&logsAll, "all", "a", false, "force merged stdout+stderr view (default behavior; kept for compatibility)")
 	f.BoolVarP(&logsDaemon, "daemon", "d", false, "show daemon system log")
+	_ = f.MarkHidden("all")
 }
 
 func runLogs(cmd *cobra.Command, args []string) {
@@ -95,10 +96,10 @@ func runLogs(cmd *cobra.Command, args []string) {
 		c.Close()
 	}
 
-	// -a / --all: fetch both stdout and stderr, merge by timestamp, tag
-	// each line with a colored [OUT] / [ERR] marker. Takes precedence
-	// over --err.
-	if logsAll {
+	// Default behavior: fetch both stdout and stderr, merge by timestamp,
+	// and tag each line with a colored [OUT] / [ERR] marker. --err switches
+	// to stderr-only; -a is kept as a compatibility alias for the default.
+	if !logsErr || logsAll {
 		runLogsBothStreams(target)
 		return
 	}
