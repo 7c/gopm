@@ -17,6 +17,11 @@ type RotatingWriter struct {
 	totalWritten int64 // cumulative bytes written since writer creation
 	rotations    int   // number of rotation events since creation
 	mu           sync.Mutex
+	// OnRotate, if non-nil, is invoked after each successful rotation with
+	// the writer's path and the updated rotations count. Callers can use
+	// this to surface rotation events in logs/diagnostics without having
+	// to poll Stats. It runs while the writer's lock is held, so keep it fast.
+	OnRotate func(path string, rotations int)
 }
 
 // Stats returns cumulative write statistics.
@@ -70,6 +75,9 @@ func (w *RotatingWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 		w.rotations++
+		if w.OnRotate != nil {
+			w.OnRotate(w.path, w.rotations)
+		}
 	}
 
 	n, err := w.current.Write(p)
@@ -190,4 +198,16 @@ func (tw *TimestampWriter) Write(p []byte) (int, error) {
 // Underlying returns the inner RotatingWriter (for Close/Truncate).
 func (tw *TimestampWriter) Underlying() *RotatingWriter {
 	return tw.w
+}
+
+// BufferedBytes returns the number of bytes currently held in the partial-line
+// buffer. Non-zero means the managed process has written output without a
+// trailing newline — those bytes are NOT on disk yet and will only be flushed
+// once a newline arrives (or the writer is closed). Follower commands like
+// `gopm logs -f` cannot display buffered bytes, so a process that emits long
+// newline-less chunks will appear to pause from the follower's perspective.
+func (tw *TimestampWriter) BufferedBytes() int {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	return len(tw.buf)
 }

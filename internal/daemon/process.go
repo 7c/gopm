@@ -218,6 +218,15 @@ func (p *Process) Start(reason string) error {
 		outRot.Close()
 		return fmt.Errorf("open stderr log: %w", err)
 	}
+	// Surface rotation events in daemon.log so operators can correlate
+	// follower hiccups with rotation. DEBUG level keeps default logs clean.
+	name := p.info.Name
+	outRot.OnRotate = func(path string, n int) {
+		slog.Debug("log rotated", "process", name, "stream", "stdout", "path", path, "rotations", n)
+	}
+	errRot.OnRotate = func(path string, n int) {
+		slog.Debug("log rotated", "process", name, "stream", "stderr", "path", path, "rotations", n)
+	}
 	p.stdout = logwriter.NewTimestampWriter(outRot)
 	p.stderr = logwriter.NewTimestampWriter(errRot)
 

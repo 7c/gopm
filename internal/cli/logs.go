@@ -32,7 +32,19 @@ stderr only.
 Use "all" as the target to display logs from every managed process,
 with a header separating each process.
 
-If only one process is managed, the target can be omitted.`,
+If only one process is managed, the target can be omitted.
+
+Follow mode (-f) survives log rotation: when the daemon rotates a log
+file, the follower detects the inode change and reopens automatically.
+
+Diagnostics: set GOPM_LOGS_DEBUG=1 to have the follower emit per-tick
+trace lines to stderr (path, size, inode, lines read per tick, rotation
+events). After ~5 seconds of no progress it prints a stall warning that
+distinguishes a client-side bug (file is growing on disk but follower
+isn't reading) from a producer-side stall (the managed process wrote
+output without a trailing newline, so it stays buffered in the daemon's
+TimestampWriter until the next newline arrives). Daemon rotation events
+are logged at DEBUG level and visible via 'gopm logs -d'.`,
 	Example: `  # Show last 20 lines, both stdout+stderr merged (default)
   gopm logs my-api
 
@@ -54,7 +66,10 @@ If only one process is managed, the target can be omitted.`,
 
   # Omit target when only one process exists
   gopm logs
-  gopm logs -f`,
+  gopm logs -f
+
+  # Debug a follower that appears to freeze
+  GOPM_LOGS_DEBUG=1 gopm logs my-api -f 2> /tmp/follower.trace`,
 	Args: cobra.MaximumNArgs(1),
 	Run:  runLogs,
 }
@@ -400,6 +415,35 @@ func splitByProcHeaders(content string) map[string]string {
 	return out
 }
 
+// logsDebug is set to true when GOPM_LOGS_DEBUG=1 is in the environment.
+// Enabling it makes tailWithRotation emit a line to stderr on every tick,
+// every rotation, and every stall, so a user reporting "gopm logs -f
+// freezes" can capture precisely what the follower sees.
+var logsDebug = os.Getenv("GOPM_LOGS_DEBUG") == "1"
+
+// inodeOf returns the inode number of the given FileInfo on Unix platforms,
+// or "?" elsewhere. Used only in debug output to correlate rotation events
+// between the client follower and the daemon's log.
+func inodeOf(fi os.FileInfo) interface{} {
+	if fi == nil {
+		return "?"
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return st.Ino
+	}
+	return "?"
+}
+
+// dbg prints a debug line prefixed with [logs-dbg] to stderr when logsDebug
+// is set. Writes go to stderr so they don't corrupt the normal log stream
+// on stdout.
+func dbg(format string, args ...interface{}) {
+	if !logsDebug {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[logs-dbg] "+format+"\n", args...)
+}
+
 // tailWithRotation follows path until done is closed, invoking emit for each
 // line read. It survives log rotation: when the daemon renames the current
 // file to `<path>.1` and creates a fresh file at <path>, os.SameFile reports
@@ -411,6 +455,13 @@ func splitByProcHeaders(content string) map[string]string {
 // everything the fresh file has received. Rotation does rename+create, which
 // has a brief window where path does not exist — we tolerate transient open
 // failures by retrying on the next poll rather than bailing out.
+//
+// When GOPM_LOGS_DEBUG=1, the follower emits per-tick diagnostics to stderr
+// and prints a stall warning if no lines are emitted for several seconds.
+// The warning distinguishes two cases: (a) the file is growing on disk but
+// the follower isn't reading it (a client bug), vs (b) the file has stopped
+// growing on disk (a daemon- or process-side stall — typically a partial
+// line buffered in TimestampWriter without a trailing newline).
 func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
 	if path == "" {
 		return
@@ -423,17 +474,20 @@ func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
 	openFile := func(seekEnd bool) bool {
 		nf, err := os.Open(path)
 		if err != nil {
+			dbg("open(%s) failed: %v", path, err)
 			return false
 		}
 		if seekEnd {
 			if _, err := nf.Seek(0, io.SeekEnd); err != nil {
 				nf.Close()
+				dbg("seek-end(%s) failed: %v", path, err)
 				return false
 			}
 		}
 		info, err := nf.Stat()
 		if err != nil {
 			nf.Close()
+			dbg("stat(%s) failed: %v", path, err)
 			return false
 		}
 		if f != nil {
@@ -442,6 +496,7 @@ func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
 		f = nf
 		reader = bufio.NewReader(f)
 		current = info
+		dbg("opened %s size=%d inode=%v seekEnd=%v", path, info.Size(), inodeOf(info), seekEnd)
 		return true
 	}
 	defer func() {
@@ -470,39 +525,88 @@ func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	var linesThisTick int
 	drain := func() {
 		for {
 			line, err := reader.ReadString('\n')
 			if len(line) > 0 {
 				emit(line)
+				linesThisTick++
 			}
 			if err != nil {
 				return
 			}
 		}
 	}
+
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+
+	// Stall tracking: warn when many consecutive ticks produce no lines.
+	// We check both the file size (on disk) and our drain output to tell
+	// apart client-side vs producer-side stalls.
+	var (
+		emptyTicks   int
+		lastSize     int64 = -1
+		stallWarned  bool
+		lastStallLog time.Time
+	)
+	const stallTickThreshold = 50 // ~5s at 100ms/tick
+
 	for {
 		select {
 		case <-done:
 			drain()
 			return
 		case <-ticker.C:
+			linesThisTick = 0
 			drain()
 			pathInfo, err := os.Stat(path)
 			if err != nil {
-				// File briefly absent during rename; try again next tick.
+				dbg("stat(%s) transient err: %v", path, err)
 				continue
 			}
-			if !os.SameFile(current, pathInfo) {
-				// Drain old FD once more to not lose lines written just
-				// before rename, then reopen at the head of the new file.
-				// If reopen races with yet another rotation, leave f as the
-				// old (stale) FD — the next tick will retry and succeed.
-				drain()
-				openFile(false)
+			size := pathInfo.Size()
+			if logsDebug {
+				dbg("tick path=%s size=%d inode=%v lines=%d",
+					path, size, inodeOf(pathInfo), linesThisTick)
 			}
+			if !os.SameFile(current, pathInfo) {
+				dbg("ROTATION %s old=%v new=%v", path, inodeOf(current), inodeOf(pathInfo))
+				drain()
+				if openFile(false) {
+					// Reset stall state on successful reopen.
+					emptyTicks = 0
+					stallWarned = false
+				}
+				continue
+			}
+			// Stall detection: same inode, no new lines. Track consecutive
+			// empty ticks and the file size delta.
+			if linesThisTick == 0 {
+				emptyTicks++
+			} else {
+				emptyTicks = 0
+				stallWarned = false
+			}
+			if emptyTicks >= stallTickThreshold && !stallWarned {
+				// Rate-limit the warning so long stalls don't spam stderr.
+				if time.Since(lastStallLog) > 30*time.Second {
+					diskGrowing := lastSize >= 0 && size > lastSize
+					if diskGrowing {
+						fmt.Fprintf(os.Stderr,
+							"WARNING: follower of %s is not reading new data, but the file grew from %d to %d bytes on disk — this is a gopm follower bug, please report.\n",
+							path, lastSize, size)
+					} else {
+						fmt.Fprintf(os.Stderr,
+							"WARNING: no new log lines on %s for %ds; file size unchanged on disk (%d bytes). The managed process may have stopped logging, or may be holding a partial line without a trailing newline (buffered in the daemon's TimestampWriter until a newline arrives).\n",
+							path, emptyTicks/10, size)
+					}
+					stallWarned = true
+					lastStallLog = time.Now()
+				}
+			}
+			lastSize = size
 		}
 	}
 }

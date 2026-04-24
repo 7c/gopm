@@ -388,6 +388,27 @@ By default, `gopm logs` fetches both stdout and stderr, merges lines in chronolo
 
 Process stderr logs contain `[gopm]`-prefixed action lines showing restarts, exits, and errors. The daemon log (`-d`) shows a unified view of all daemon-level events.
 
+#### Follow mode and log rotation
+
+`gopm logs -f` survives log rotation. When a log reaches `--max-log-size` (default 1 MB), the daemon renames the current file to `<path>.1` and creates a fresh file at the original path. The follower detects the inode change via `os.SameFile` and reopens automatically, so no lines are dropped. Rotation events are logged at DEBUG level on the daemon and appear in `gopm logs -d`:
+
+```
+time=... level=DEBUG msg="log rotated" process=api stream=stdout path=.../api-out.log rotations=3
+```
+
+#### Diagnosing a frozen follower
+
+If `gopm logs -f` appears to stop updating, set `GOPM_LOGS_DEBUG=1` to get per-tick diagnostics on stderr:
+
+```bash
+GOPM_LOGS_DEBUG=1 gopm logs api -f 2> /tmp/follower.trace
+```
+
+The trace shows every 100 ms tick with the file path, size, inode, and lines-emitted-this-tick, plus an explicit `ROTATION` line when the inode changes and a confirmation when the new file is opened. After ~5 seconds of no progress the follower prints a warning that pinpoints the stall:
+
+- If the file is **growing on disk but the follower isn't reading**, the warning flags it as a client-side bug — please file an issue with the trace attached.
+- If the file size is **unchanged on disk**, the managed process has either stopped logging or is holding a partial line without a trailing newline. The daemon's `TimestampWriter` buffers everything up to the next `\n`, so a chunk written via `fmt.Fprint(os.Stdout, data)` without a newline will sit in memory until a newline arrives (or the process exits). Adding `\n` at the end of each record — e.g., `fmt.Fprintln` instead of `fmt.Fprint` — fixes this.
+
 ### `gopm flush`
 
 Clear log files for a process or all processes.
