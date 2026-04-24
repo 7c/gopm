@@ -400,6 +400,113 @@ func splitByProcHeaders(content string) map[string]string {
 	return out
 }
 
+// tailWithRotation follows path until done is closed, invoking emit for each
+// line read. It survives log rotation: when the daemon renames the current
+// file to `<path>.1` and creates a fresh file at <path>, os.SameFile reports
+// the path now points to a different inode, and we reopen from the start of
+// the new file so no lines are dropped.
+//
+// On the initial open we seek to end (pre-existing content was already
+// printed as the dump). On reopen after rotation we seek to 0 to pick up
+// everything the fresh file has received. Rotation does rename+create, which
+// has a brief window where path does not exist — we tolerate transient open
+// failures by retrying on the next poll rather than bailing out.
+func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
+	if path == "" {
+		return
+	}
+	var (
+		f       *os.File
+		reader  *bufio.Reader
+		current os.FileInfo
+	)
+	openFile := func(seekEnd bool) bool {
+		nf, err := os.Open(path)
+		if err != nil {
+			return false
+		}
+		if seekEnd {
+			if _, err := nf.Seek(0, io.SeekEnd); err != nil {
+				nf.Close()
+				return false
+			}
+		}
+		info, err := nf.Stat()
+		if err != nil {
+			nf.Close()
+			return false
+		}
+		if f != nil {
+			f.Close()
+		}
+		f = nf
+		reader = bufio.NewReader(f)
+		current = info
+		return true
+	}
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
+
+	// Initial open may race with an in-progress rotation. Retry for up to
+	// ~5s before giving up, so the common case of a fast-rotating log doesn't
+	// cause a silent failure on the very first attempt.
+	deadline := time.Now().Add(5 * time.Second)
+	for f == nil {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		if openFile(true) {
+			break
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintf(os.Stderr, "WARNING: cannot open %s: file did not settle within 5s\n", path)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	drain := func() {
+		for {
+			line, err := reader.ReadString('\n')
+			if len(line) > 0 {
+				emit(line)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			drain()
+			return
+		case <-ticker.C:
+			drain()
+			pathInfo, err := os.Stat(path)
+			if err != nil {
+				// File briefly absent during rename; try again next tick.
+				continue
+			}
+			if !os.SameFile(current, pathInfo) {
+				// Drain old FD once more to not lose lines written just
+				// before rename, then reopen at the head of the new file.
+				// If reopen races with yet another rotation, leave f as the
+				// old (stale) FD — the next tick will retry and succeed.
+				drain()
+				openFile(false)
+			}
+		}
+	}
+}
+
 // followTwoFiles tails stdout and stderr of a single process concurrently,
 // tagging each line with [OUT] or [ERR] and dimming timestamps.
 func followTwoFiles(outPath, errPath, procPrefix string) {
@@ -410,47 +517,28 @@ func followTwoFiles(outPath, errPath, procPrefix string) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 
-	tail := func(path string, stream logStream) {
-		defer wg.Done()
-		if path == "" {
-			return
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: cannot open %s: %v\n", path, err)
-			return
-		}
-		defer f.Close()
-		if _, err := f.Seek(0, io.SeekEnd); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: cannot seek %s: %v\n", path, err)
-			return
-		}
-		reader := bufio.NewReader(f)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				for {
-					line, err := reader.ReadString('\n')
-					if len(line) > 0 {
-						mu.Lock()
-						fmt.Print(formatTaggedLine(taggedLine{stream, line}, procPrefix))
-						mu.Unlock()
-					}
-					if err != nil {
-						break
-					}
-				}
-			}
+	emitStream := func(stream logStream) func(string) {
+		return func(line string) {
+			mu.Lock()
+			fmt.Print(formatTaggedLine(taggedLine{stream, line}, procPrefix))
+			mu.Unlock()
 		}
 	}
 
-	wg.Add(2)
-	go tail(outPath, streamStdout)
-	go tail(errPath, streamStderr)
+	if outPath != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tailWithRotation(outPath, done, emitStream(streamStdout))
+		}()
+	}
+	if errPath != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tailWithRotation(errPath, done, emitStream(streamStderr))
+		}()
+	}
 
 	<-sigCh
 	close(done)
@@ -475,53 +563,29 @@ func followTwoFilesPerProc(outPaths, errPaths map[string]string) {
 		names[n] = struct{}{}
 	}
 
-	tailOne := func(procName, path string, stream logStream) {
-		defer wg.Done()
-		if path == "" {
-			return
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: cannot open %s %s: %v\n", procName, path, err)
-			return
-		}
-		defer f.Close()
-		if _, err := f.Seek(0, io.SeekEnd); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: cannot seek %s %s: %v\n", procName, path, err)
-			return
-		}
-		reader := bufio.NewReader(f)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
+	emitStream := func(procName string, stream logStream) func(string) {
 		prefix := display.Cyan(fmt.Sprintf("%-15s", procName))
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				for {
-					line, err := reader.ReadString('\n')
-					if len(line) > 0 {
-						mu.Lock()
-						fmt.Print(formatTaggedLine(taggedLine{stream, line}, prefix))
-						mu.Unlock()
-					}
-					if err != nil {
-						break
-					}
-				}
-			}
+		return func(line string) {
+			mu.Lock()
+			fmt.Print(formatTaggedLine(taggedLine{stream, line}, prefix))
+			mu.Unlock()
 		}
 	}
 
 	for name := range names {
-		if p, ok := outPaths[name]; ok {
+		if p, ok := outPaths[name]; ok && p != "" {
 			wg.Add(1)
-			go tailOne(name, p, streamStdout)
+			go func(n, path string) {
+				defer wg.Done()
+				tailWithRotation(path, done, emitStream(n, streamStdout))
+			}(name, p)
 		}
-		if p, ok := errPaths[name]; ok {
+		if p, ok := errPaths[name]; ok && p != "" {
 			wg.Add(1)
-			go tailOne(name, p, streamStderr)
+			go func(n, path string) {
+				defer wg.Done()
+				tailWithRotation(path, done, emitStream(n, streamStderr))
+			}(name, p)
 		}
 	}
 
@@ -532,43 +596,23 @@ func followTwoFilesPerProc(outPaths, errPaths map[string]string) {
 
 // followFile tails a single log file. If prefix is non-empty, each line is prefixed.
 func followFile(path string, prefix string) {
-	f, err := os.Open(path)
-	if err != nil {
-		outputError(fmt.Sprintf("cannot open log file: %v", err))
-	}
-	defer f.Close()
-
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		outputError(fmt.Sprintf("cannot seek log file: %v", err))
-	}
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	done := make(chan struct{})
 
-	reader := bufio.NewReader(f)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-sigCh:
-			return
-		case <-ticker.C:
-			for {
-				line, err := reader.ReadString('\n')
-				if len(line) > 0 {
-					if prefix != "" {
-						fmt.Print(display.Cyan(prefix) + " " + colorizeLogLine(line))
-					} else {
-						fmt.Print(colorizeLogLine(line))
-					}
-				}
-				if err != nil {
-					break
-				}
-			}
+	emit := func(line string) {
+		if prefix != "" {
+			fmt.Print(display.Cyan(prefix) + " " + colorizeLogLine(line))
+		} else {
+			fmt.Print(colorizeLogLine(line))
 		}
 	}
+
+	go func() {
+		<-sigCh
+		close(done)
+	}()
+	tailWithRotation(path, done, emit)
 }
 
 // followMultipleFiles tails multiple log files concurrently with name prefixes.
@@ -576,57 +620,27 @@ func followMultipleFiles(paths map[string]string) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Output mutex to prevent interleaved lines.
 	var mu sync.Mutex
-
 	var wg sync.WaitGroup
 	done := make(chan struct{})
 
 	for name, path := range paths {
-		f, err := os.Open(path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: cannot open %s log: %v\n", name, err)
+		if path == "" {
 			continue
 		}
-		if _, err := f.Seek(0, io.SeekEnd); err != nil {
-			f.Close()
-			fmt.Fprintf(os.Stderr, "WARNING: cannot seek %s log: %v\n", name, err)
-			continue
+		prefix := display.Cyan(fmt.Sprintf("%-15s", name)) + " "
+		emit := func(line string) {
+			mu.Lock()
+			fmt.Print(prefix + colorizeLogLine(line))
+			mu.Unlock()
 		}
-
 		wg.Add(1)
-		go func(name string, f *os.File) {
+		go func(p string, e func(string)) {
 			defer wg.Done()
-			defer f.Close()
-
-			reader := bufio.NewReader(f)
-			ticker := time.NewTicker(100 * time.Millisecond)
-			defer ticker.Stop()
-
-			prefix := display.Cyan(fmt.Sprintf("%-15s", name)) + " "
-
-			for {
-				select {
-				case <-done:
-					return
-				case <-ticker.C:
-					for {
-						line, err := reader.ReadString('\n')
-						if len(line) > 0 {
-							mu.Lock()
-							fmt.Print(prefix + colorizeLogLine(line))
-							mu.Unlock()
-						}
-						if err != nil {
-							break
-						}
-					}
-				}
-			}
-		}(name, f)
+			tailWithRotation(p, done, e)
+		}(path, emit)
 	}
 
-	// Wait for signal.
 	<-sigCh
 	close(done)
 	wg.Wait()

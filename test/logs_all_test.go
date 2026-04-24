@@ -1,8 +1,12 @@
 package test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -145,6 +149,64 @@ func TestLogsAllFlagOverridesErr(t *testing.T) {
 	clean := stripANSI(out)
 	if !strings.Contains(clean, "mix-out") || !strings.Contains(clean, "mix-err") {
 		t.Errorf("logs -a --err should include both streams:\n%s", clean)
+	}
+}
+
+// TestLogsFollowSurvivesRotation is a regression test for the bug where
+// `gopm logs -f` froze shortly after the log file rotated (the follower held
+// a stale FD to the renamed file). We flood stdout with a tiny rotation
+// threshold so rotation happens within a second, then assert the follower
+// kept emitting lines across multiple rotations.
+func TestLogsFollowSurvivesRotation(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin,
+		"--name", "rotater",
+		"--max-log-size", "20K",
+		"--",
+		"--stdout-flood", "--stdout-size", "200",
+	)
+	env.WaitForStatus("rotater", "online", 5*time.Second)
+	// Let the process burn through several rotations before we start following.
+	time.Sleep(500 * time.Millisecond)
+
+	cmd := exec.Command(env.GopmBin, "logs", "rotater", "-f", "-n", "3")
+	cmd.Env = append(os.Environ(), "GOPM_HOME="+env.Home)
+	var outBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start follower: %v", err)
+	}
+
+	// 2.5s at ~200-byte lines + 20K rotation threshold guarantees several
+	// rotations. A working follower will stream tens of thousands of lines;
+	// the buggy one freezes within milliseconds and stops at the initial dump.
+	time.Sleep(2500 * time.Millisecond)
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	_ = cmd.Wait()
+
+	// Confirm rotation actually happened during the test window.
+	rotatedPath := filepath.Join(env.Home, "logs", "rotater-out.log.1")
+	if _, err := os.Stat(rotatedPath); err != nil {
+		entries, _ := os.ReadDir(filepath.Join(env.Home, "logs"))
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("expected rotation at %s: %v\nlogs dir contents: %v", rotatedPath, err, names)
+	}
+
+	lineCount := strings.Count(outBuf.String(), "\n")
+	// Threshold chosen well above any plausible "froze after initial dump"
+	// outcome (which would be ~3 lines) and well below what a healthy follower
+	// produces at this rate (~thousands). 100 is a comfortable middle ground.
+	if lineCount < 100 {
+		preview := outBuf.String()
+		if len(preview) > 2000 {
+			preview = preview[:2000] + "\n...[truncated]"
+		}
+		t.Errorf("follower froze after rotation: only %d lines in 2.5s\noutput:\n%s", lineCount, preview)
 	}
 }
 
