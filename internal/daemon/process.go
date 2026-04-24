@@ -102,7 +102,7 @@ func NewProcess(id int, params protocol.StartParams) *Process {
 		cwd, _ = os.Getwd()
 	}
 
-	var maxLogSize int64 = 1048576 // 1MB
+	var maxLogSize int64 = 104857600 // 100MB
 	if params.MaxLogSize != "" {
 		if s, err := protocol.ParseSize(params.MaxLogSize); err == nil {
 			maxLogSize = s

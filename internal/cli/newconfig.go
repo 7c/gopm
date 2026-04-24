@@ -14,7 +14,7 @@ import (
 const defaultConfig = `{
   "logs": {
     "directory": "~/.gopm/logs",
-    "max_size": "1M",
+    "max_size": "100M",
     "max_files": 3
   },
   "mcpserver": {

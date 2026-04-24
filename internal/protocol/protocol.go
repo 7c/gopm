@@ -263,7 +263,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 func ParseSize(s string) (int64, error) {
 	s = strings.TrimSpace(strings.ToUpper(s))
 	if s == "" {
-		return 1048576, nil // default 1MB
+		return 104857600, nil // default 100MB
 	}
 	var multiplier int64 = 1
 	numStr := s

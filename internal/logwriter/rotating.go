@@ -35,7 +35,7 @@ func (w *RotatingWriter) Stats() (totalBytes int64, rotations int) {
 // of rotated files to keep (e.g. 3 means .1, .2, .3).
 func New(path string, maxSize int64, maxFiles int) (*RotatingWriter, error) {
 	if maxSize <= 0 {
-		maxSize = 1048576 // 1MB default
+		maxSize = 104857600 // 100MB default
 	}
 	if maxFiles <= 0 {
 		maxFiles = 3

@@ -17,7 +17,7 @@ func TestParseSize(t *testing.T) {
 		{"1G", 1024 * 1024 * 1024, false},
 		{"500K", 500 * 1024, false},
 		{"1024", 1024, false},
-		{"", 1048576, false}, // default 1MB
+		{"", 104857600, false}, // default 100MB
 		{"abc", 0, true},
 	}
 	for _, tt := range tests {

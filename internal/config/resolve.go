@@ -40,18 +40,18 @@ func Resolve(cfg *Config, gopmHome string) (*Resolved, []string, error) {
 	// --- Logs (cannot be disabled, null = defaults + warning) ---
 	logDefaults := LogsConfig{
 		Directory: filepath.Join(gopmHome, "logs"),
-		MaxSize:   "1M",
+		MaxSize:   "100M",
 		MaxFiles:  3,
 	}
 
 	if cfg == nil || cfg.Logs == nil {
 		r.LogDir = logDefaults.Directory
-		r.LogMaxSize = 1048576
+		r.LogMaxSize = 104857600
 		r.LogMaxFiles = 3
 	} else if isJSONNull(cfg.Logs) {
 		warnings = append(warnings, "logs: null treated as defaults (logging cannot be disabled)")
 		r.LogDir = logDefaults.Directory
-		r.LogMaxSize = 1048576
+		r.LogMaxSize = 104857600
 		r.LogMaxFiles = 3
 	} else {
 		logs := logDefaults

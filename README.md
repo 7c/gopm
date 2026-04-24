@@ -107,7 +107,7 @@ Flags:
   --kill-timeout duration    Time before SIGKILL after SIGTERM (default: 5s)
   --log-out string           Custom stdout log path
   --log-err string           Custom stderr log path
-  --max-log-size string      Max log file size before rotation (default: 1M)
+  --max-log-size string      Max log file size before rotation (default: 100M)
   --json                     Output as JSON
 ```
 
@@ -314,7 +314,7 @@ Flags:
 │ Kill Timeout    │ 5s                               │
 │ Stdout Log      │ ~/.gopm/logs/api-out.log         │
 │ Stderr Log      │ ~/.gopm/logs/api-err.log         │
-│ Max Log Size    │ 1 MB                             │
+│ Max Log Size    │ 100 MB                           │
 │ Env             │ APP_ENV=production               │
 │                 │ DB_HOST=10.0.0.5                 │
 └─────────────────┴──────────────────────────────────┘
@@ -390,7 +390,7 @@ Process stderr logs contain `[gopm]`-prefixed action lines showing restarts, exi
 
 #### Follow mode and log rotation
 
-`gopm logs -f` survives log rotation. When a log reaches `--max-log-size` (default 1 MB), the daemon renames the current file to `<path>.1` and creates a fresh file at the original path. The follower detects the inode change via `os.SameFile` and reopens automatically, so no lines are dropped. Rotation events are logged at DEBUG level on the daemon and appear in `gopm logs -d`:
+`gopm logs -f` survives log rotation. When a log reaches `--max-log-size` (default 100 MB), the daemon renames the current file to `<path>.1` and creates a fresh file at the original path. The follower detects the inode change via `os.SameFile` and reopens automatically, so no lines are dropped. Rotation events are logged at DEBUG level on the daemon and appear in `gopm logs -d`:
 
 ```
 time=... level=DEBUG msg="log rotated" process=api stream=stdout path=.../api-out.log rotations=3
@@ -980,7 +980,7 @@ Deploy multiple applications from a single JSON configuration file.
       "kill_timeout": "5s",
       "log_out": "/custom/path/out.log",
       "log_err": "/custom/path/err.log",
-      "max_log_size": "1M"
+      "max_log_size": "100M"
     }
   ]
 }
@@ -1009,9 +1009,9 @@ GoPM captures stdout and stderr for each process into separate log files with bu
 | Log directory | `~/.gopm/logs/` |
 | Stdout log | `<name>-out.log` |
 | Stderr log | `<name>-err.log` |
-| Max file size | 1 MB |
+| Max file size | 100 MB |
 | Rotated files kept | 3 |
-| **Max disk per process** | **~8 MB** |
+| **Max disk per process** | **~800 MB** |
 
 When a log file exceeds `max-log-size`, it rotates:
 
@@ -2043,9 +2043,9 @@ gopm/
 | Max delay | `30s` | Backoff cap |
 | Kill signal | `SIGTERM` | First signal sent on stop |
 | Kill timeout | `5s` | Before escalating to SIGKILL |
-| Max log size | `1 MB` | Per log file |
+| Max log size | `100 MB` | Per log file |
 | Rotated files | `3` | Old log files kept |
-| Max disk/process | `~8 MB` | (1+3 files) × 2 streams |
+| Max disk/process | `~800 MB` | (1+3 files) × 2 streams |
 | Metrics interval | `2s` | CPU/memory sampling |
 | Socket path | `~/.gopm/gopm.sock` | IPC endpoint |
 | MCP HTTP server | enabled on `127.0.0.1:18999` | Disable via `"mcpserver": null` |
