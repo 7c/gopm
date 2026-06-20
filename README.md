@@ -2073,4 +2073,4 @@ Intentionally out of scope to keep it lean:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE)..
