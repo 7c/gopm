@@ -4,18 +4,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// UserHome resolves the current user's home directory. Unlike os.UserHomeDir,
+// which on Unix only consults $HOME, this falls back to the passwd database so
+// it still works when $HOME is unset (systemd services, cron, sudo without -H,
+// bare service accounts). Returns "" only if home cannot be determined at all.
+func UserHome() string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h
+	}
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir
+	}
+	return ""
+}
+
 // GopmHome returns the gopm state directory, respecting GOPM_HOME env var.
+// It panics if neither GOPM_HOME nor a home directory can be resolved, rather
+// than silently using a relative ".gopm" in the current working directory.
 func GopmHome() string {
 	if h := os.Getenv("GOPM_HOME"); h != "" {
 		return h
 	}
-	home, _ := os.UserHomeDir()
+	home := UserHome()
+	if home == "" {
+		fmt.Fprintln(os.Stderr, "gopm: cannot determine home directory ($HOME is unset and the user has no passwd entry); set GOPM_HOME to an absolute path")
+		os.Exit(1)
+	}
 	return filepath.Join(home, ".gopm")
 }
 

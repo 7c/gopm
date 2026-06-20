@@ -21,6 +21,7 @@ After=network.target
 Type=forking
 User={{.User}}
 Environment=HOME={{.Home}}
+Environment=GOPM_HOME={{.Home}}/.gopm
 PIDFile={{.Home}}/.gopm/daemon.pid
 ExecStart=/usr/local/bin/gopm resurrect
 ExecStop=/usr/local/bin/gopm kill

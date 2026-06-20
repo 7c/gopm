@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -58,12 +57,14 @@ func Resolve(cfg *Config, gopmHome string) (*Resolved, []string, error) {
 		if err := json.Unmarshal(cfg.Logs, &logs); err != nil {
 			return nil, nil, fmt.Errorf("logs: %w", err)
 		}
-		// Resolve ~ in directory
-		if strings.HasPrefix(logs.Directory, "~/") {
-			home, _ := os.UserHomeDir()
-			if home != "" {
-				logs.Directory = filepath.Join(home, logs.Directory[2:])
+		// Resolve ~ in directory. Fail loudly if home is unresolvable rather
+		// than leaving a literal "~" that gets created as a directory named "~".
+		if logs.Directory == "~" || strings.HasPrefix(logs.Directory, "~/") {
+			home := protocol.UserHome()
+			if home == "" {
+				return nil, nil, fmt.Errorf("logs.directory %q uses ~ but home directory cannot be determined ($HOME unset); set an absolute path or GOPM_HOME", logs.Directory)
 			}
+			logs.Directory = filepath.Join(home, strings.TrimPrefix(logs.Directory[1:], "/"))
 		}
 		// Validate max_size
 		maxSize, err := protocol.ParseSize(logs.MaxSize)

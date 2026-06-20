@@ -5,18 +5,21 @@
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "mcr.microsoft.com/devcontainers/go:2-1.26-trixie",
 	"features": {
-		"ghcr.io/devcontainers-extra/features/zsh-plugins": {
-			
-		}
-		
+
 	},
+	// Mount the host's ~/.ssh read-only into a staging path; postCreateCommand copies
+	// keys into ~/.ssh so the container can write its own ~/.ssh/config without
+	// mutating the host's files.
+	"mounts": [
+		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/vscode/.ssh-localhost,type=bind,readonly"
+	],
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 	// Use 'postCreateCommand' to run commands after the container is created.
 	// "postCreateCommand": "go version",
-	"postCreateCommand": "bash -lc \"echo \\\"alias ll='ls -l'\\\" >> ~/.bashrc || true; echo \\\"alias ll='ls -l'\\\" >> ~/.zshrc || true\"",
+	"postCreateCommand": "bash -lc \"echo \\\"alias ll='ls -l'\\\" >> ~/.bashrc || true; echo \\\"alias ll='ls -l'\\\" >> ~/.zshrc || true; mkdir -p ~/.ssh && chmod 700 ~/.ssh && if [ -d /home/vscode/.ssh-localhost ]; then cp -r /home/vscode/.ssh-localhost/. ~/.ssh/ && chmod 700 ~/.ssh && find ~/.ssh -type f -exec chmod 600 {} \\;; fi && if [ -S /home/vscode/1p.sock ]; then printf '%s\\n' 'Host gitlab1.org' '  IdentityAgent /home/vscode/1p.sock' > ~/.ssh/config && chmod 600 ~/.ssh/config; else echo 'Note: 1Password socket not present; skipping SSH IdentityAgent config'; fi\"",
 	// Configure tool-specific properties.
 	// "customizations": {},
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
