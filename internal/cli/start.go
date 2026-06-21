@@ -27,6 +27,10 @@ to the child process.`,
   gopm start node --name my-api -- server.js --port 3000
   gopm start node --name my-api --cwd /srv/app --env NODE_ENV=production -- index.js
 
+  # Start a dev server (npm script or npx)
+  gopm start npm --name vite-dev --cwd /path/to/project -- run dev
+  gopm start npx --name vite-dev --cwd /path/to/project -- vite dev --port 5173
+
   # Start a Go binary
   gopm start ./myserver --name backend -- --listen :8080
   gopm start /usr/local/bin/myserver --name backend --autorestart on-failure
