@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/7c/gopm/internal/config"
+	"github.com/7c/gopm/internal/logwriter"
 	"github.com/7c/gopm/internal/mcphttp"
 	"github.com/7c/gopm/internal/protocol"
 	"github.com/7c/gopm/internal/telemetry"
@@ -88,6 +89,12 @@ type Daemon struct {
 	resolved     *config.Resolved
 	configPath   string
 	configSource string
+
+	logWriter *logwriter.RotatingWriter
+
+	stateSaveLogMu   sync.Mutex
+	stateSaveLogLast time.Time
+	stateSaveLogSeen int
 }
 
 // Run starts the daemon. This is the main entry point for daemon mode.
@@ -113,18 +120,19 @@ func Run(version string, configFlag string, debug bool, logLevelArg string) {
 	// Ensure log directory exists (may come from config)
 	os.MkdirAll(resolved.LogDir, 0755)
 
-	// Set up logging to a file. Default is Debug so production daemons
-	// capture enough context to diagnose issues without a redeploy.
-	// Override via --log-level (info|warn|error). Legacy --debug is a
-	// no-op now since debug is the default.
+	// Set up logging to a file with size-based rotation using the same
+	// max_size/max_files knobs as child process logs. Default is Debug so
+	// production daemons capture enough context to diagnose issues without
+	// a redeploy. Override via --log-level (info|warn|error). Legacy --debug
+	// is a no-op now since debug is the default.
 	logPath := filepath.Join(home, "daemon.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	logWriter, err := logwriter.New(logPath, resolved.LogMaxSize, resolved.LogMaxFiles)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot open log file: %v\n", err)
 		os.Exit(1)
 	}
 	logLevel := parseLogLevel(logLevelArg, debug)
-	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: logLevel}))
+	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 	slog.Info("log level set", "level", logLevel.String(),
 		"source", logLevelSource(logLevelArg, debug))
@@ -150,9 +158,13 @@ func Run(version string, configFlag string, debug bool, logLevelArg string) {
 		resolved:     resolved,
 		configPath:   result.Path,
 		configSource: result.Source,
+		logWriter:    logWriter,
 		counters: daemonCounters{
 			rpcCallsByMethod: make(map[string]uint64),
 		},
+	}
+	logWriter.OnRotate = func(path string, rotations int) {
+		slog.Info("daemon log rotated", "path", path, "rotations", rotations)
 	}
 
 	// Print startup banner
@@ -783,6 +795,9 @@ func (d *Daemon) rebootShutdown() {
 	os.Remove(protocol.PIDFilePath())
 
 	slog.Info("daemon stopped for reboot")
+	if d.logWriter != nil {
+		d.logWriter.Close()
+	}
 	os.Exit(0)
 }
 
@@ -826,6 +841,9 @@ func (d *Daemon) shutdown() {
 	os.Remove(protocol.PIDFilePath())
 
 	slog.Info("daemon stopped")
+	if d.logWriter != nil {
+		d.logWriter.Close()
+	}
 	os.Exit(0)
 }
 

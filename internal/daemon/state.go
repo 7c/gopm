@@ -6,9 +6,15 @@ import (
 	"log/slog"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/7c/gopm/internal/protocol"
 )
+
+// stateSaveLogMinInterval throttles the "state saved" Debug log when the
+// process table has not changed. A flapping process that hits autoSave every
+// ~2s would otherwise emit millions of lines a day even at Debug level.
+const stateSaveLogMinInterval = 30 * time.Second
 
 // autoSave is a convenience wrapper that logs errors from SaveState.
 func (d *Daemon) autoSave(reason string) {
@@ -41,8 +47,26 @@ func (d *Daemon) SaveState() error {
 	}
 
 	atomic.AddUint64(&d.counters.stateSaves, 1)
-	slog.Debug("state saved", "path", path, "count", len(infos))
+	if d.shouldLogStateSave(len(infos)) {
+		slog.Debug("state saved", "path", path, "count", len(infos))
+	}
 	return nil
+}
+
+// shouldLogStateSave returns true when the "state saved" debug line is worth
+// emitting: the process count changed since the last logged save, or enough
+// time has passed. This prevents crash-looping supervisors from generating
+// millions of identical log lines.
+func (d *Daemon) shouldLogStateSave(count int) bool {
+	d.stateSaveLogMu.Lock()
+	defer d.stateSaveLogMu.Unlock()
+	now := time.Now()
+	if count != d.stateSaveLogSeen || now.Sub(d.stateSaveLogLast) >= stateSaveLogMinInterval {
+		d.stateSaveLogLast = now
+		d.stateSaveLogSeen = count
+		return true
+	}
+	return false
 }
 
 // LoadState reads the dump.json and returns process infos.
