@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRotatingWriter(t *testing.T) {
@@ -65,6 +67,90 @@ func TestRotatingWriterRotation(t *testing.T) {
 	if len(data) != 31 {
 		t.Errorf("current file size = %d, want 31", len(data))
 	}
+}
+
+// TestRotatingWriterOnRotateMayWriteBack guards a self-deadlock: the daemon's
+// OnRotate callback logs through the same writer that just rotated. When the
+// callback ran with the writer's lock held, that write blocked forever on a
+// non-reentrant mutex and wedged every goroutine that logged afterwards.
+func TestRotatingWriterOnRotateMayWriteBack(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	w, err := New(path, 50, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotRotations := make(chan int, 1)
+	w.OnRotate = func(_ string, rotations int) {
+		gotRotations <- rotations
+		w.Write([]byte("rotated\n")) // re-enter the writer
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		line := strings.Repeat("X", 30) + "\n" // 31 bytes
+		w.Write([]byte(line))                  // 31 bytes
+		w.Write([]byte(line))                  // 62 bytes -> rotates
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		// Do not Close here: the wedged goroutine still holds the lock.
+		t.Fatal("Write deadlocked; OnRotate must run after the lock is released")
+	}
+
+	if r := <-gotRotations; r != 1 {
+		t.Errorf("OnRotate got rotations = %d, want 1", r)
+	}
+
+	w.Close()
+
+	data, _ := os.ReadFile(path)
+	want := strings.Repeat("X", 30) + "\nrotated\n"
+	if string(data) != want {
+		t.Errorf("current file = %q, want %q", data, want)
+	}
+}
+
+// TestRotatingWriterOnRotateNoRecursion covers a callback whose own notice is
+// larger than maxSize, so writing it rotates again. That nested rotation must
+// not re-invoke OnRotate.
+func TestRotatingWriterOnRotateNoRecursion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	w, err := New(path, 20, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var calls atomic.Int32
+	w.OnRotate = func(_ string, _ int) {
+		calls.Add(1)
+		w.Write([]byte(strings.Repeat("N", 40) + "\n")) // 41 bytes > maxSize
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Write([]byte(strings.Repeat("X", 15) + "\n")) // 16 bytes
+		w.Write([]byte(strings.Repeat("X", 15) + "\n")) // 32 bytes -> rotates
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Write did not return; OnRotate recursed or deadlocked")
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("OnRotate called %d times, want 1", got)
+	}
+	w.Close()
 }
 
 func TestRotatingWriterTruncate(t *testing.T) {

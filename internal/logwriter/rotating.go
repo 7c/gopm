@@ -16,11 +16,18 @@ type RotatingWriter struct {
 	written      int64
 	totalWritten int64 // cumulative bytes written since writer creation
 	rotations    int   // number of rotation events since creation
+	inOnRotate   bool  // an OnRotate callback is currently running
 	mu           sync.Mutex
 	// OnRotate, if non-nil, is invoked after each successful rotation with
 	// the writer's path and the updated rotations count. Callers can use
 	// this to surface rotation events in logs/diagnostics without having
-	// to poll Stats. It runs while the writer's lock is held, so keep it fast.
+	// to poll Stats.
+	//
+	// It runs after the writer's lock is released, so the callback may write
+	// back into this writer — which is what the daemon does, since it logs
+	// rotation events through the same writer that rotated. A rotation
+	// triggered from inside the callback does not re-invoke OnRotate, so a
+	// notice larger than maxSize cannot recurse forever.
 	OnRotate func(path string, rotations int)
 }
 
@@ -63,27 +70,53 @@ func New(path string, maxSize int64, maxFiles int) (*RotatingWriter, error) {
 
 // Write implements io.Writer. It rotates the file if maxSize is exceeded.
 func (w *RotatingWriter) Write(p []byte) (int, error) {
+	n, onRotate, rotations, err := w.write(p)
+
+	// Invoke OnRotate with the lock released. Holding it here would deadlock
+	// any callback that logs through this same writer, since sync.Mutex is
+	// not reentrant.
+	if onRotate != nil {
+		defer w.endOnRotate()
+		onRotate(w.path, rotations)
+	}
+	return n, err
+}
+
+// write performs the locked portion of Write. When a rotation occurred it also
+// returns the OnRotate callback and the rotation count, for the caller to
+// invoke once the lock is released.
+func (w *RotatingWriter) write(p []byte) (n int, onRotate func(string, int), rotations int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if w.current == nil {
-		return 0, fmt.Errorf("writer is closed")
+		return 0, nil, 0, fmt.Errorf("writer is closed")
 	}
 
 	if w.written+int64(len(p)) > w.maxSize {
 		if err := w.rotate(); err != nil {
-			return 0, err
+			return 0, nil, 0, err
 		}
 		w.rotations++
-		if w.OnRotate != nil {
-			w.OnRotate(w.path, w.rotations)
+		// Skip the callback when one is already running: its own write is
+		// what rotated us, and re-invoking would recurse without bound.
+		if w.OnRotate != nil && !w.inOnRotate {
+			w.inOnRotate = true
+			onRotate, rotations = w.OnRotate, w.rotations
 		}
 	}
 
-	n, err := w.current.Write(p)
+	n, err = w.current.Write(p)
 	w.written += int64(n)
 	w.totalWritten += int64(n)
-	return n, err
+	return n, onRotate, rotations, err
+}
+
+// endOnRotate clears the reentrancy guard set by write.
+func (w *RotatingWriter) endOnRotate() {
+	w.mu.Lock()
+	w.inOnRotate = false
+	w.mu.Unlock()
 }
 
 // rotate shifts log files: .2→delete, .1→.2, current→.1, open fresh.
