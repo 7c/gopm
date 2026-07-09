@@ -12,7 +12,7 @@ GoPM is a minimal alternative to PM2 for managing long-running processes on Linu
 - **Zero runtime dependencies** — no Node.js, no npm, no Python
 - **Small footprint** — minimal, well-vetted Go libraries; no bloat
 - **Familiar CLI** — if you've used PM2, you already know GoPM
-- **Script-friendly** — `--json` output and `isrunning` exit codes for automation
+- **Script-friendly** — `--json` output and `isrunning` / `isprocess` exit codes for automation
 - **AI-ready** — embedded MCP HTTP server for Claude and other AI tools
 - **Optional telemetry** — opt-in Telegraf/InfluxDB metrics export
 - **Configurable** — JSON config file for logs, MCP, and telemetry settings
@@ -347,6 +347,38 @@ fi
 
 # Cron health check
 */5 * * * * gopm isrunning api || gopm restart api
+```
+
+### `gopm isprocess`
+
+Check whether a process is *known to the daemon*, regardless of its state. Where `isrunning` asks "is it online?", `isprocess` asks "is it defined?" — a stopped or errored process still exits `0`.
+
+Unlike most commands, `isprocess` never starts the daemon. It is a read-only query, and auto-starting one would report "not found" against a fresh, empty daemon.
+
+```
+Usage:
+  gopm isprocess <name|id>
+```
+
+**Exit codes:**
+- `0` — process exists (online, stopped, or errored)
+- `1` — daemon is reachable but has no such process
+- `2` — daemon is not running or did not answer
+
+**Examples:**
+
+```bash
+# Provision a process only the first time
+gopm isprocess api || gopm start ./api --name api
+
+# Tell "no such process" apart from "gopm is broken"
+gopm isprocess api; case $? in
+    0) echo "known" ;;
+    1) echo "not defined" ;;
+    2) echo "daemon down" >&2 ;;
+esac
+
+gopm isprocess api --json   # {"name":"api","exists":true,"status":"stopped"}
 ```
 
 ### `gopm logs`
@@ -880,6 +912,10 @@ gopm ping --json
 # Check if a process is running (exit code + optional JSON)
 gopm isrunning api          # exit 0 if online, 1 otherwise
 gopm isrunning api --json   # {"name":"api","running":true,"status":"online","pid":4521}
+
+# Check if a process exists at all, in any state
+gopm isprocess api          # exit 0 if defined, 1 if unknown, 2 if daemon is down
+gopm isprocess api --json   # {"name":"api","exists":true,"status":"stopped"}
 ```
 
 **Scripting patterns:**
@@ -887,6 +923,10 @@ gopm isrunning api --json   # {"name":"api","running":true,"status":"online","pi
 ```bash
 # Restart only if running
 gopm isrunning api && gopm restart api
+
+# Define the process once, then keep it alive
+gopm isprocess api || gopm start ./api --name api
+gopm isrunning api || gopm restart api
 
 # Wait for process to come online
 while ! gopm isrunning api; do sleep 1; done

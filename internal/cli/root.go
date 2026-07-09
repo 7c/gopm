@@ -25,10 +25,22 @@ var jsonOutput bool
 // debugOutput is the global flag for debug logging.
 var debugOutput bool
 
-var rootCmd = &cobra.Command{
-	Use:   "gopm",
-	Short: display.CBold + "GoPM" + display.CReset + " — Lightweight Process Manager",
-	Run:   runRoot,
+// Command groups for `gopm --help`, ordered as they render. Commands are
+// grouped by what they act on so an operation can be found by scanning for its
+// kind rather than reading one flat list.
+const (
+	groupProcess = "process"
+	groupDaemon  = "daemon"
+	groupConfig  = "config"
+	groupTool    = "tool"
+)
+
+// commandGroups is the render order of the help sections.
+var commandGroups = []*cobra.Group{
+	{ID: groupProcess, Title: display.CYellow + "Process Management:" + display.CReset},
+	{ID: groupDaemon, Title: display.CYellow + "Daemon Management:" + display.CReset},
+	{ID: groupConfig, Title: display.CYellow + "Configuration & State:" + display.CReset},
+	{ID: groupTool, Title: display.CYellow + "Tools & Diagnostics:" + display.CReset},
 }
 
 // coloredHelpTemplate is the Cobra help template with ANSI colors.
@@ -48,9 +60,14 @@ var coloredHelpTemplate = `{{with .Long}}{{. | trimTrailingWhitespaces}}
 {{.Example}}
 
 {{end}}` +
-	`{{if .HasAvailableSubCommands}}` + display.CYellow + `Available Commands:` + display.CReset + `{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+	`{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}` + display.CYellow + `Available Commands:` + display.CReset + `{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+  ` + display.CCyan + `{{rpad .Name .NamePadding}}` + display.CReset + `  {{.Short}}{{end}}{{end}}
+{{else}}{{range $group := .Groups}}{{$group.Title}}{{range $cmds}}{{if (and (eq .GroupID $group.ID) (or .IsAvailableCommand (eq .Name "help")))}}
   ` + display.CCyan + `{{rpad .Name .NamePadding}}` + display.CReset + `  {{.Short}}{{end}}{{end}}
 
+{{end}}{{if not .AllChildCommandsHaveGroup}}` + display.CYellow + `Additional Commands:` + display.CReset + `{{range $cmds}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
+  ` + display.CCyan + `{{rpad .Name .NamePadding}}` + display.CReset + `  {{.Short}}{{end}}{{end}}
+{{end}}{{end}}
 {{end}}` +
 	`{{if .HasAvailableLocalFlags}}` + display.CYellow + `Flags:` + display.CReset + `
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
@@ -93,6 +110,41 @@ func runRoot(cmd *cobra.Command, args []string) {
 	printVersionMismatchWarning(os.Stdout)
 }
 
+// newRootCommand builds the root command with its groups and subcommands.
+// Kept separate from Execute so tests can render help without os.Exit.
+func newRootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "gopm",
+		Short: display.CBold + "GoPM" + display.CReset + " — Lightweight Process Manager",
+		Run:   runRoot,
+	}
+	root.SetHelpTemplate(coloredHelpTemplate)
+	root.AddGroup(commandGroups...)
+
+	// Groups must exist before AddCommand: cobra panics on an unknown GroupID.
+	// Assigning here rather than in each command file keeps the taxonomy in one
+	// place, and avoids duplicating it across pid.go / pid_stub.go build tags.
+	add := func(groupID string, cmds ...*cobra.Command) {
+		for _, c := range cmds {
+			c.GroupID = groupID
+			root.AddCommand(c)
+		}
+	}
+	add(groupProcess, startCmd, stopCmd, restartCmd, deleteCmd, listCmd, describeCmd,
+		isrunningCmd, isprocessCmd, logsCmd, flushCmd, watchCmd, statsCmd)
+	add(groupDaemon, pingCmd, statusCmd, killCmd, rebootCmd,
+		installCmd, uninstallCmd, suspendCmd, unsuspendCmd)
+	add(groupConfig, exportCmd, importCmd, resurrectCmd, pm2Cmd)
+	add(groupTool, guiCmd, pidCmd, versionCmd)
+
+	// Cobra generates help and completion itself; give them a group so they do
+	// not land in the Additional Commands fallback.
+	root.SetHelpCommandGroupID(groupTool)
+	root.SetCompletionCommandGroupID(groupTool)
+
+	return root
+}
+
 // Execute sets up the root command, registers all subcommands, and runs cobra.
 func Execute() {
 	// Check for --daemon flag before cobra parses anything.
@@ -122,40 +174,11 @@ func Execute() {
 		return // never reached; daemon.Run calls os.Exit
 	}
 
+	rootCmd := newRootCommand()
 	rootCmd.Version = Version
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
 	rootCmd.PersistentFlags().BoolVar(&debugOutput, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().StringVar(&configFlag, "config", "", "path to gopm.config.json")
-
-	// Apply colored help template globally.
-	rootCmd.SetHelpTemplate(coloredHelpTemplate)
-
-	rootCmd.AddCommand(startCmd)
-	rootCmd.AddCommand(stopCmd)
-	rootCmd.AddCommand(restartCmd)
-	rootCmd.AddCommand(deleteCmd)
-	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(describeCmd)
-	rootCmd.AddCommand(isrunningCmd)
-	rootCmd.AddCommand(logsCmd)
-	rootCmd.AddCommand(flushCmd)
-	rootCmd.AddCommand(resurrectCmd)
-	rootCmd.AddCommand(installCmd)
-	rootCmd.AddCommand(uninstallCmd)
-	rootCmd.AddCommand(pingCmd)
-	rootCmd.AddCommand(killCmd)
-	rootCmd.AddCommand(rebootCmd)
-	rootCmd.AddCommand(guiCmd)
-	rootCmd.AddCommand(statusCmd)
-	rootCmd.AddCommand(exportCmd)
-	rootCmd.AddCommand(importCmd)
-	rootCmd.AddCommand(suspendCmd)
-	rootCmd.AddCommand(unsuspendCmd)
-	rootCmd.AddCommand(pidCmd)
-	rootCmd.AddCommand(pm2Cmd)
-	rootCmd.AddCommand(watchCmd)
-	rootCmd.AddCommand(statsCmd)
-	rootCmd.AddCommand(versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

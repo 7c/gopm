@@ -141,6 +141,101 @@ func TestIsRunning(t *testing.T) {
 	}
 }
 
+// TestIsProcess covers the contract isprocess adds over isrunning: existence in
+// any state, and a distinct exit code when the daemon cannot be reached.
+func TestIsProcess(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "chk", "--", "--run-forever")
+	env.WaitForStatus("chk", "online", 5*time.Second)
+
+	_, _, code := env.Gopm("isprocess", "chk")
+	if code != 0 {
+		t.Errorf("isprocess should exit 0 for online process, got %d", code)
+	}
+
+	// The distinguishing case: stopped still exists, so isprocess exits 0
+	// where isrunning exits 1.
+	env.MustGopm("stop", "chk")
+	env.WaitForStatus("chk", "stopped", 5*time.Second)
+
+	_, _, code = env.Gopm("isprocess", "chk")
+	if code != 0 {
+		t.Errorf("isprocess should exit 0 for stopped process, got %d", code)
+	}
+	if _, _, rcode := env.Gopm("isrunning", "chk"); rcode != 1 {
+		t.Errorf("isrunning should still exit 1 for stopped process, got %d", rcode)
+	}
+
+	// Errored also counts as existing.
+	env.MustGopm("start", env.TestappBin, "--name", "crasher",
+		"--autorestart", "on-failure", "--max-restarts", "1", "--restart-delay", "500ms",
+		"--", "--crash-after", "500ms", "--exit-code", "1")
+	env.WaitForStatus("crasher", "errored", 20*time.Second)
+
+	_, _, code = env.Gopm("isprocess", "crasher")
+	if code != 0 {
+		t.Errorf("isprocess should exit 0 for errored process, got %d", code)
+	}
+
+	// Known daemon, unknown process.
+	_, _, code = env.Gopm("isprocess", "nonexistent")
+	if code != 1 {
+		t.Errorf("isprocess should exit 1 for non-existent process, got %d", code)
+	}
+
+	// Unreachable daemon is its own exit code, and must not be papered over by
+	// auto-starting one.
+	env.MustGopm("kill")
+	env.WaitForDaemonStopped(5 * time.Second)
+
+	_, _, code = env.Gopm("isprocess", "chk")
+	if code != 2 {
+		t.Errorf("isprocess should exit 2 when the daemon is down, got %d", code)
+	}
+	// If the call above had auto-started a daemon, this one would reach it and
+	// report "not found" (exit 1) against an empty process table.
+	_, _, code = env.Gopm("isprocess", "chk")
+	if code != 2 {
+		t.Errorf("isprocess must not auto-start a daemon; second call exited %d, want 2", code)
+	}
+}
+
+func TestIsProcessJSON(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "jchk", "--", "--run-forever")
+	env.WaitForStatus("jchk", "online", 5*time.Second)
+
+	out, _, code := env.Gopm("isprocess", "jchk", "--json")
+	if code != 0 {
+		t.Fatalf("isprocess --json exited %d: %s", code, out)
+	}
+	var result struct {
+		Name   string `json:"name"`
+		Exists bool   `json:"exists"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("parsing isprocess --json output %q: %v", out, err)
+	}
+	if !result.Exists || result.Name != "jchk" || result.Status != "online" {
+		t.Errorf("got %+v, want name=jchk exists=true status=online", result)
+	}
+
+	out, _, code = env.Gopm("isprocess", "nonexistent", "--json")
+	if code != 1 {
+		t.Fatalf("isprocess --json exited %d for missing process, want 1", code)
+	}
+	result.Exists = true
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("parsing isprocess --json output %q: %v", out, err)
+	}
+	if result.Exists {
+		t.Errorf("exists should be false for a missing process, got %+v", result)
+	}
+}
+
 func TestLogs(t *testing.T) {
 	env := NewTestEnv(t)
 

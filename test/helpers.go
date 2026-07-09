@@ -84,6 +84,22 @@ func (e *TestEnv) MustGopm(args ...string) string {
 	return stdout
 }
 
+// WaitForDaemonStopped polls until the daemon has removed its socket. `gopm
+// kill` returns as soon as the daemon acknowledges the request, before it has
+// finished shutting down, so tests that assert "daemon is gone" must wait.
+func (e *TestEnv) WaitForDaemonStopped(timeout time.Duration) {
+	e.T.Helper()
+	sock := filepath.Join(e.Home, "gopm.sock")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(sock); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	e.T.Fatalf("daemon still running after %s: socket %s still exists", timeout, sock)
+}
+
 // WaitForStatus polls `gopm list --json` until the named process reaches the target status.
 func (e *TestEnv) WaitForStatus(name string, status string, timeout time.Duration) {
 	e.T.Helper()

@@ -215,37 +215,65 @@ Commands supporting `--json`:
 
 ### 5.1 Global Help
 
+Commands are grouped by what they act on, so an operation can be found by
+scanning for its kind rather than reading one flat list.
+
 ```
 gopm — Lightweight Process Manager
 
 Usage:
-  gopm <command> [flags]
+  gopm [flags]
+  gopm [command]
 
-Commands:
-  start       Start a process or ecosystem file
-  stop        Stop a process
-  restart     Restart a process
+Process Management:
   delete      Stop and remove a process from the list
-  list        List all processes (alias: ls, status)
   describe    Show detailed info about a process
-  isrunning   Check if a process is running (exit code based)
-  logs        Stream logs for a process
   flush       Clear log files
-  save        Save current process list for resurrection
-  resurrect   Restore previously saved processes
-  gui         Launch interactive terminal UI
-  mcp         Start MCP (Model Context Protocol) server
+  isprocess   Check if a process exists in any state (exit code based)
+  isrunning   Check if a process is running (exit code based)
+  list        List all processes
+  logs        Display process log output
+  restart     Restart a process
+  start       Start a process or load an ecosystem config
+  stats       Show historical metrics charts
+  stop        Stop a running process
+  watch       Live-updating process table
+
+Daemon Management:
   install     Install gopm as a systemd service
-  uninstall   Remove gopm systemd service
-  ping        Check if daemon is running
   kill        Kill the daemon
+  ping        Check if daemon is running
+  reboot      Restart the daemon (save, stop, exit, resurrect)
+  status      Show daemon status and resolved configuration
+  suspend     Stop daemon and disable the systemd service
+  uninstall   Remove gopm systemd service
+  unsuspend   Enable the systemd service and start the daemon
+
+Configuration & State:
+  export      Export process config or print sample gopm.config.json
+  import      Import processes from one or more JSON files
+  pm2         Import processes from PM2 into gopm
+  resurrect   Restore previously saved processes
+
+Tools & Diagnostics:
+  completion  Generate the autocompletion script for the specified shell
+  gui         Launch interactive terminal UI
+  help        Help about any command
+  pid         Inspect any process by PID
+  version     Show gopm CLI and daemon versions
 
 Flags:
-  -h, --help      Show help
-  -v, --version   Show version
+      --config string   path to gopm.config.json
+      --debug           enable debug logging
+  -h, --help            help for gopm
+      --json            output in JSON format
+  -v, --version         version for gopm
 
-Use "gopm <command> -h" for more information about a command.
+Use "gopm [command] --help" for more information about a command.
 ```
+
+Every command is assigned to a group. A command registered without one falls
+into an `Additional Commands:` section, which acts as a visible defect signal.
 
 ### 5.2 start
 
@@ -464,7 +492,67 @@ Examples:
   gopm isrunning worker && curl -s http://localhost:8080/health
 ```
 
-### 5.9 logs
+### 5.9 isprocess
+
+```
+Usage:
+  gopm isprocess <name|id>
+
+Check whether a process is known to the daemon, regardless of whether it is
+online, stopped, or errored. Use isrunning instead to test for "online".
+
+Unlike most gopm commands, isprocess never starts the daemon: it is a read-only
+query, and auto-starting would report "not found" against a fresh, empty daemon.
+
+Exit codes:
+  0  Process exists (online, stopped, or errored)
+  1  Daemon is reachable but has no such process
+  2  Daemon is not running or did not answer
+
+Output:
+  $ gopm isprocess api
+  api: online (PID 4521)
+  $ echo $?
+  0
+
+  $ gopm isprocess worker
+  worker: stopped
+  $ echo $?
+  0
+
+  $ gopm isprocess nonexistent
+  nonexistent: not found
+  $ echo $?
+  1
+
+  $ gopm kill && gopm isprocess api
+  Error: gopm daemon is not running
+  $ echo $?
+  2
+
+Examples:
+  # Provision a process only the first time, then keep it alive
+  gopm isprocess api || gopm start ./api --name api
+  gopm isrunning api || gopm restart api
+
+  # Distinguish "no such process" from "gopm is broken"
+  gopm isprocess api; case $? in
+      0) echo "known" ;;
+      1) echo "not defined" ;;
+      2) echo "daemon down" >&2 ;;
+  esac
+```
+
+`isprocess` reuses the `isrunning` RPC: the daemon answers an unknown target
+with a successful response whose `status` is empty, so a non-empty status means
+the process exists. With `--json` the CLI emits an explicit flag rather than
+making callers infer existence from an empty string:
+
+```json
+{"name": "api", "exists": true, "status": "stopped"}
+```
+
+### 5.10 logs
 
 ```
 Usage:
@@ -483,7 +571,7 @@ Examples:
   gopm logs api --err
 ```
 
-### 5.10 flush
+### 5.11 flush
 
 ```
 Usage:
@@ -492,7 +580,7 @@ Usage:
 Clears log files for the specified process(es).
 ```
 
-### 5.11 save
+### 5.12 save
 
 ```
 Usage:
@@ -502,7 +590,7 @@ Persists the current process list to ~/.gopm/dump.json.
 Used in conjunction with `resurrect` to survive reboots.
 ```
 
-### 5.12 resurrect
+### 5.13 resurrect
 
 ```
 Usage:
@@ -511,7 +599,7 @@ Usage:
 Reads ~/.gopm/dump.json and starts all processes that were previously online.
 ```
 
-### 5.13 install
+### 5.14 install
 
 ```
 Usage:
@@ -564,7 +652,7 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 ```
 
-### 5.14 uninstall
+### 5.15 uninstall
 
 ```
 Usage:
@@ -581,7 +669,7 @@ Does NOT remove ~/.gopm/ (preserves logs and config).
 Requires root/sudo.
 ```
 
-### 5.15 ping
+### 5.16 ping
 
 ```
 Usage:
@@ -602,7 +690,7 @@ Exit codes:
   1  daemon is not running
 ```
 
-### 5.16 kill
+### 5.17 kill
 
 ```
 Usage:
@@ -612,7 +700,7 @@ Sends shutdown signal to the daemon. All managed processes are stopped gracefull
 (SIGTERM → wait kill_timeout → SIGKILL), then daemon exits.
 ```
 
-### 5.17 gui
+### 5.18 gui
 
 ```
 Usage:
@@ -719,7 +807,7 @@ func (m GUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 ```
 
-### 5.18 mcp
+### 5.19 mcp
 
 ```
 Usage:
