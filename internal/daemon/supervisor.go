@@ -27,6 +27,7 @@ func (d *Daemon) monitorInstance(p *Process, cmd *exec.Cmd, pid int, uptime time
 
 	p.mu.Lock()
 	wasStopping := p.stopping
+	stopReason := p.stopReason
 	currentInstance := p.instance
 	currentPID := p.info.PID
 	if instance == currentInstance {
@@ -52,12 +53,16 @@ func (d *Daemon) monitorInstance(p *Process, cmd *exec.Cmd, pid int, uptime time
 	runDuration := time.Since(uptime)
 
 	if wasStopping {
+		if stopReason == "" {
+			stopReason = "stopped by user"
+		}
 		p.MarkExited(exitCode, protocol.StatusStopped)
-		p.SetReason("stopped by user")
-		p.LogAction("process stopped (exit code %d)", exitCode)
+		p.SetReason(stopReason)
+		p.LogAction("process stopped: %s (exit code %d)", stopReason, exitCode)
 		slog.Info("process stopped", "name", p.info.Name, "pid", pid,
 			"instance", instance,
-			"exit_code", exitCode, "run_duration", runDuration)
+			"exit_code", exitCode, "run_duration", runDuration,
+			"reason", stopReason)
 		d.autoSave("process stopped")
 		return
 	}

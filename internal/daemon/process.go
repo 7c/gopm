@@ -30,8 +30,13 @@ type Process struct {
 	cmd      *exec.Cmd
 	exitCh   chan struct{}
 	stopping bool
-	stdout   *logwriter.TimestampWriter
-	stderr   *logwriter.TimestampWriter
+	// stopReason is captured by Stop() and read by the monitor goroutine so
+	// that "stopped by user" (RPC), "daemon shutdown", "daemon reboot", etc.
+	// stay distinguishable in status_reason instead of collapsing to a single
+	// hardcoded label.
+	stopReason string
+	stdout     *logwriter.TimestampWriter
+	stderr     *logwriter.TimestampWriter
 
 	// instance is incremented every Start(). Monitor goroutines capture this
 	// at creation time and use it to detect stale restart paths. Atomic so
@@ -266,6 +271,7 @@ func (p *Process) Start(reason string) error {
 	p.exitCh = make(chan struct{})
 	p.cancelRestart = make(chan struct{})
 	p.stopping = false
+	p.stopReason = ""
 	p.info.PID = cmd.Process.Pid
 	p.info.Status = protocol.StatusOnline
 	p.info.StatusReason = ""
@@ -295,7 +301,11 @@ func (p *Process) Start(reason string) error {
 // Stop sends SIGTERM then SIGKILL after timeout. If the process is currently
 // in the supervisor restart-delay window (status != Online but a supervisor
 // goroutine is waiting to restart), Stop also cancels the pending restart.
-func (p *Process) Stop() error {
+//
+// reason is recorded in ProcessInfo.StatusReason so the persisted state
+// distinguishes a user-initiated stop from a daemon-shutdown cascade, etc.
+// Pass "" only for legacy tests that don't care about the label.
+func (p *Process) Stop(reason string) error {
 	p.mu.Lock()
 	p.stopCount++
 
@@ -315,12 +325,20 @@ func (p *Process) Stop() error {
 
 	if p.info.Status != protocol.StatusOnline || p.cmd == nil {
 		status := p.info.Status
+		// The process is already exited (e.g. sitting in the supervisor's
+		// restart-delay window). Record the reason so it's persisted —
+		// otherwise a shutdown-triggered cancel leaves an unlabelled
+		// "stopped" entry in dump.json.
+		if reason != "" && status == protocol.StatusStopped {
+			p.info.StatusReason = reason
+		}
 		p.mu.Unlock()
 		slog.Debug("Stop called but process not Online, no kill needed",
-			"name", p.info.Name, "status", status)
+			"name", p.info.Name, "status", status, "reason", reason)
 		return nil
 	}
 	p.stopping = true
+	p.stopReason = reason
 	pid := p.info.PID
 	exitCh := p.exitCh
 	killTimeout := p.info.RestartPolicy.KillTimeout.Duration

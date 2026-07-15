@@ -481,7 +481,7 @@ func (d *Daemon) handleStop(params json.RawMessage) protocol.Response {
 	}
 
 	for _, p := range procs {
-		if err := p.Stop(); err != nil {
+		if err := p.Stop("stopped by user"); err != nil {
 			slog.Error("failed to stop process", "name", p.info.Name, "error", err)
 		}
 	}
@@ -505,7 +505,7 @@ func (d *Daemon) handleRestart(params json.RawMessage) protocol.Response {
 
 	var results []protocol.ProcessInfo
 	for _, p := range procs {
-		p.Stop()
+		p.Stop("restarting")
 
 		p.mu.Lock()
 		p.info.Restarts = 0
@@ -541,7 +541,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) protocol.Response {
 	}
 
 	for _, p := range procs {
-		p.Stop()
+		p.Stop("deleted")
 		p.CloseLogWriters()
 		d.mu.Lock()
 		delete(d.processes, p.info.Name)
@@ -785,7 +785,7 @@ func (d *Daemon) rebootShutdown() {
 		wg.Add(1)
 		go func(proc *Process) {
 			defer wg.Done()
-			proc.Stop()
+			proc.Stop("daemon reboot")
 			proc.CloseLogWriters()
 		}(p)
 	}
@@ -830,7 +830,7 @@ func (d *Daemon) shutdown() {
 		wg.Add(1)
 		go func(proc *Process) {
 			defer wg.Done()
-			proc.Stop()
+			proc.Stop("daemon shutdown")
 			proc.CloseLogWriters()
 		}(p)
 	}

@@ -78,7 +78,7 @@ func TestStartBumpsInstanceCounter(t *testing.T) {
 	if got := p.Instance(); got != 1 {
 		t.Fatalf("instance after 1st Start = %d, want 1", got)
 	}
-	if err := p.Stop(); err != nil {
+	if err := p.Stop("test"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	if err := p.Start("test-2"); err != nil {
@@ -88,7 +88,7 @@ func TestStartBumpsInstanceCounter(t *testing.T) {
 	if got := p.Instance(); got != 2 {
 		t.Errorf("instance after 2nd Start = %d, want 2", got)
 	}
-	p.Stop()
+	p.Stop("test")
 }
 
 // TestStopThenStartReapsOldProcess verifies the normal Stop()+Start() flow:
@@ -99,7 +99,7 @@ func TestStopThenStartReapsOldProcess(t *testing.T) {
 	p := startLongRunning(t, d, "stoprestart")
 
 	firstPID := p.info.PID
-	if err := p.Stop(); err != nil {
+	if err := p.Stop("test"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 
@@ -130,7 +130,7 @@ func TestStopThenStartReapsOldProcess(t *testing.T) {
 		t.Errorf("second process %d not alive", secondPID)
 	}
 
-	p.Stop()
+	p.Stop("test")
 }
 
 // TestStopClosesCancelRestart verifies Stop() closes the cancelRestart
@@ -146,7 +146,7 @@ func TestStopClosesCancelRestart(t *testing.T) {
 
 	stopDone := make(chan struct{})
 	go func() {
-		p.Stop()
+		p.Stop("test")
 		close(stopDone)
 	}()
 
@@ -198,7 +198,7 @@ func TestStopCancelsPendingSupervisorRestart(t *testing.T) {
 	}
 
 	// Cancel via Stop() — should close cancelRestart and abort the restart.
-	if err := p.Stop(); err != nil {
+	if err := p.Stop("test"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 
@@ -267,7 +267,7 @@ func TestUserRestartDuringSupervisorDelay(t *testing.T) {
 	longParams.Args = []string{"30"}
 
 	// Mimic handleRestart behavior: Stop (cancels supervisor), then Start.
-	if err := p.Stop(); err != nil {
+	if err := p.Stop("test"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	// Swap command so the new start runs sleep, not the crashing sh.
@@ -303,7 +303,7 @@ func TestUserRestartDuringSupervisorDelay(t *testing.T) {
 		t.Errorf("current PID %d not alive after user restart", currentPID)
 	}
 
-	p.Stop()
+	p.Stop("test")
 }
 
 // TestLifecycleCountersBumpCorrectly verifies each Start/Stop/crash path
@@ -321,7 +321,7 @@ func TestLifecycleCountersBumpCorrectly(t *testing.T) {
 	}
 
 	// User restart: Stop + Start("user-restart") + monitor.
-	if err := p.Stop(); err != nil {
+	if err := p.Stop("test"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	if err := p.Start("user-restart"); err != nil {
@@ -343,7 +343,7 @@ func TestLifecycleCountersBumpCorrectly(t *testing.T) {
 		t.Errorf("SupervisorRestartCount = %d, want 0", info.SupervisorRestartCount)
 	}
 
-	p.Stop()
+	p.Stop("test")
 }
 
 // TestCrashCountBumpsOnNonZeroExit uses a short-lived crashing process with
@@ -416,7 +416,7 @@ func TestConcurrentRestartNoOrphans(t *testing.T) {
 	// Fire many sequential user-restarts rapidly.
 	var pids []int
 	for i := 0; i < 10; i++ {
-		p.Stop()
+		p.Stop("test")
 		if err := p.Start("user-restart"); err != nil {
 			t.Fatalf("Start %d: %v", i, err)
 		}
@@ -449,5 +449,5 @@ func TestConcurrentRestartNoOrphans(t *testing.T) {
 		}
 	}
 
-	p.Stop()
+	p.Stop("test")
 }

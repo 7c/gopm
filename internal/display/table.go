@@ -143,7 +143,7 @@ func RenderProcessList(w io.Writer, procs []protocol.ProcessInfo, showPorts bool
 		}
 		rawStatus := string(p.Status)
 		colorStatus := StatusColor(rawStatus)
-		if p.StatusReason != "" && p.Status == protocol.StatusErrored {
+		if p.StatusReason != "" && (p.Status == protocol.StatusErrored || p.Status == protocol.StatusStopped) {
 			rawStatus += " (" + p.StatusReason + ")"
 			colorStatus += Dim(" ("+p.StatusReason+")")
 		}
