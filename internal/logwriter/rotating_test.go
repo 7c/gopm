@@ -1,6 +1,7 @@
 package logwriter
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,6 +152,106 @@ func TestRotatingWriterOnRotateNoRecursion(t *testing.T) {
 		t.Errorf("OnRotate called %d times, want 1", got)
 	}
 	w.Close()
+}
+
+// TestRotatingWriterOnRotateSyncSlogDeadlocks documents the second layer of
+// the deadlock that b664038 alone did not fix. slog.Handler.Handle holds its
+// own mutex across w.Write, so if OnRotate logs synchronously through the
+// same handler, the nested Handle blocks on that mutex — even though
+// RotatingWriter has already released its own lock. The whole daemon then
+// wedges. The daemon must schedule the notice on a fresh goroutine.
+func TestRotatingWriterOnRotateSyncSlogDeadlocks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	w, err := New(path, 200, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	logger := slog.New(slog.NewTextHandler(w, nil))
+
+	w.OnRotate = func(p string, rotations int) {
+		// The dangerous pattern: re-enters TextHandler.Handle while its
+		// outer invocation still holds h.mu. Must not be used in the
+		// daemon; kept here to lock in the guarantee that this pattern
+		// deadlocks so a future refactor cannot silently ship it.
+		logger.Info("daemon log rotated", "path", p, "rotations", rotations)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 5; i++ {
+			logger.Info("filler", "i", i, "pad", strings.Repeat("x", 40))
+		}
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("sync slog inside OnRotate should have deadlocked on TextHandler.mu, but did not — writer semantics changed and daemon.go's async goroutine fix may no longer be needed (or another bug is masking this)")
+	case <-time.After(2 * time.Second):
+		// Expected: deadlock.
+	}
+}
+
+// TestRotatingWriterOnRotateAsyncSlogSucceeds pins the daemon's correct
+// pattern: deferring the rotation notice to a fresh goroutine escapes the
+// outer TextHandler.Handle stack frame and its mutex, so logging completes.
+func TestRotatingWriterOnRotateAsyncSlogSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	// Size chosen so exactly one rotation fires from the writes below and
+	// the follow-up notice stays in the fresh file. Multiple rotations
+	// would race the async notice into rotated files and make this test
+	// non-deterministic.
+	w, err := New(path, 2000, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	logger := slog.New(slog.NewTextHandler(w, nil))
+
+	notice := make(chan struct{}, 1)
+	w.OnRotate = func(p string, rotations int) {
+		go func() {
+			logger.Info("daemon log rotated", "path", p, "rotations", rotations)
+			notice <- struct{}{}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// ~120 bytes per line, ~2000 bytes total triggers one rotation
+		// and leaves plenty of room for the notice.
+		for i := 0; i < 15; i++ {
+			logger.Info("filler", "i", i, "pad", strings.Repeat("x", 80))
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("logging through slog deadlocked on the TextHandler mutex")
+	}
+
+	select {
+	case <-notice:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnRotate never wrote the rotation notice through slog")
+	}
+
+	if _, err := os.Stat(path + ".1"); os.IsNotExist(err) {
+		t.Error("rotated file .1 should exist")
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "daemon log rotated") {
+		t.Errorf("current file missing rotation notice; got %q", data)
+	}
 }
 
 func TestRotatingWriterTruncate(t *testing.T) {

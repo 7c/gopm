@@ -164,7 +164,11 @@ func Run(version string, configFlag string, debug bool, logLevelArg string) {
 		},
 	}
 	logWriter.OnRotate = func(path string, rotations int) {
-		slog.Info("daemon log rotated", "path", path, "rotations", rotations)
+		// Must not call slog synchronously: this callback fires from inside
+		// a slog.Handler.Handle call, which holds the handler's own mutex
+		// across the write. Re-entering slog here would deadlock on that
+		// mutex and wedge every subsequent logger, freezing the daemon.
+		go slog.Info("daemon log rotated", "path", path, "rotations", rotations)
 	}
 
 	// Print startup banner
