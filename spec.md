@@ -310,24 +310,35 @@ Flags:
 
 ```
 Usage:
-  gopm stop <name|id|all>
+  gopm stop <name|id|all> [name|id ...]
 
 Examples:
   gopm stop api
   gopm stop 0
   gopm stop all
+  gopm stop api worker cron
 ```
+
+Multiple targets are stopped in order. If any target fails (unknown name/id
+or stop error), the remaining targets are still processed and the command
+exits with a non-zero status. If any argument is `all`, it short-circuits
+to a single `all` call.
 
 ### 5.4 restart
 
 ```
 Usage:
-  gopm restart <name|id|all>
+  gopm restart <name|id|all> [name|id ...]
 
 Examples:
   gopm restart api
   gopm restart all
+  gopm restart api worker
 ```
+
+Multiple targets are restarted in order with the same partial-failure
+semantics as `stop`. JSON output is a single `ProcessInfo` for one target
+and a `ProcessInfo` array for multiple targets or `all`.
 
 ### 5.5 delete
 

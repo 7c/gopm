@@ -415,6 +415,140 @@ func TestStopAll(t *testing.T) {
 	}
 }
 
+func TestStopMultipleTargets(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "m1", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "m2", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "m3", "--", "--run-forever")
+	env.WaitForStatus("m1", "online", 5*time.Second)
+	env.WaitForStatus("m2", "online", 5*time.Second)
+	env.WaitForStatus("m3", "online", 5*time.Second)
+
+	// Stop two, leave m3 running.
+	env.MustGopm("stop", "m1", "m2")
+	env.WaitForStatus("m1", "stopped", 5*time.Second)
+	env.WaitForStatus("m2", "stopped", 5*time.Second)
+
+	if s := env.GetProcessField("m3", "status"); s != "online" {
+		t.Errorf("m3 status = %q, want still online", s)
+	}
+}
+
+func TestStopMultipleTargets_PartialFailureExitsNonZero(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "ok1", "--", "--run-forever")
+	env.WaitForStatus("ok1", "online", 5*time.Second)
+
+	// One valid target, one bogus — expect exit != 0 but ok1 still stopped.
+	_, stderr, code := env.Gopm("stop", "ok1", "does-not-exist")
+	if code == 0 {
+		t.Error("expected non-zero exit when any target fails")
+	}
+	if !strings.Contains(stderr, "does-not-exist") {
+		t.Errorf("stderr should mention failing target: %q", stderr)
+	}
+	env.WaitForStatus("ok1", "stopped", 5*time.Second)
+}
+
+func TestStopMultipleTargets_JSONOutput(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "j1", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "j2", "--", "--run-forever")
+	env.WaitForStatus("j1", "online", 5*time.Second)
+	env.WaitForStatus("j2", "online", 5*time.Second)
+
+	out := env.MustGopm("--json", "stop", "j1", "j2")
+	var results []map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("expected JSON array, got %q: %v", out, err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d: %v", len(results), results)
+	}
+	for _, r := range results {
+		if r["success"] != true {
+			t.Errorf("expected success for %v", r)
+		}
+	}
+}
+
+func TestRestartMultipleTargets(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "r1", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "r2", "--", "--run-forever")
+	env.WaitForStatus("r1", "online", 5*time.Second)
+	env.WaitForStatus("r2", "online", 5*time.Second)
+
+	pid1Before := env.GetProcessField("r1", "pid")
+	pid2Before := env.GetProcessField("r2", "pid")
+
+	env.MustGopm("restart", "r1", "r2")
+	env.WaitForStatus("r1", "online", 5*time.Second)
+	env.WaitForStatus("r2", "online", 5*time.Second)
+
+	pid1After := env.GetProcessField("r1", "pid")
+	pid2After := env.GetProcessField("r2", "pid")
+
+	if pid1Before == pid1After {
+		t.Errorf("r1 PID should have changed, got %s both times", pid1After)
+	}
+	if pid2Before == pid2After {
+		t.Errorf("r2 PID should have changed, got %s both times", pid2After)
+	}
+}
+
+func TestRestartMultipleTargets_JSONArray(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "rj1", "--", "--run-forever")
+	env.MustGopm("start", env.TestappBin, "--name", "rj2", "--", "--run-forever")
+	env.WaitForStatus("rj1", "online", 5*time.Second)
+	env.WaitForStatus("rj2", "online", 5*time.Second)
+
+	out := env.MustGopm("--json", "restart", "rj1", "rj2")
+	var procs []map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &procs); err != nil {
+		t.Fatalf("expected JSON array, got %q: %v", out, err)
+	}
+	if len(procs) != 2 {
+		t.Fatalf("expected 2 process entries, got %d: %v", len(procs), procs)
+	}
+	names := map[string]bool{}
+	for _, p := range procs {
+		if n, ok := p["name"].(string); ok {
+			names[n] = true
+		}
+	}
+	if !names["rj1"] || !names["rj2"] {
+		t.Errorf("expected rj1 and rj2 in restart output, got %v", names)
+	}
+}
+
+func TestRestartMultipleTargets_PartialFailureExitsNonZero(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "rp1", "--", "--run-forever")
+	env.WaitForStatus("rp1", "online", 5*time.Second)
+	pidBefore := env.GetProcessField("rp1", "pid")
+
+	_, stderr, code := env.Gopm("restart", "rp1", "does-not-exist")
+	if code == 0 {
+		t.Error("expected non-zero exit when any restart target fails")
+	}
+	if !strings.Contains(stderr, "does-not-exist") {
+		t.Errorf("stderr should mention failing target: %q", stderr)
+	}
+	env.WaitForStatus("rp1", "online", 5*time.Second)
+	pidAfter := env.GetProcessField("rp1", "pid")
+	if pidBefore == pidAfter {
+		t.Errorf("rp1 should have been restarted even though the other target failed")
+	}
+}
+
 func TestAutoLoadDumpOnDaemonStart(t *testing.T) {
 	env := NewTestEnv(t)
 

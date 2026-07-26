@@ -11,14 +11,14 @@ import (
 )
 
 var restartCmd = &cobra.Command{
-	Use:   "restart <name|id|all>",
-	Short: "Restart a process",
-	Args:  cobra.ExactArgs(1),
+	Use:   "restart <name|id|all> [name|id ...]",
+	Short: "Restart one or more processes",
+	Args:  cobra.MinimumNArgs(1),
 	Run:   runRestart,
 }
 
 func runRestart(cmd *cobra.Command, args []string) {
-	target := args[0]
+	targets := normalizeTargets(args)
 
 	c, err := newClient()
 	if err != nil {
@@ -26,34 +26,68 @@ func runRestart(cmd *cobra.Command, args []string) {
 	}
 	defer c.Close()
 
-	params := protocol.TargetParams{Target: target}
-	resp, err := c.Send(protocol.MethodRestart, params)
-	if err != nil {
-		exitError(fmt.Sprintf("failed to restart process: %v", err))
-	}
-	if !resp.Success {
-		exitError(resp.Error)
+	var restarted []protocol.ProcessInfo
+	failures := 0
+
+	for _, target := range targets {
+		params := protocol.TargetParams{Target: target}
+		resp, err := c.Send(protocol.MethodRestart, params)
+		if err != nil {
+			failures++
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "%s failed to restart %s: %v\n",
+					display.Red("Error:"), display.Bold(target), err)
+			}
+			continue
+		}
+		if !resp.Success {
+			failures++
+			if !jsonOutput {
+				fmt.Fprintf(os.Stderr, "%s %s: %s\n",
+					display.Red("Error:"), display.Bold(target), resp.Error)
+			}
+			continue
+		}
+		restarted = append(restarted, unmarshalRestartResponse(resp.Data)...)
 	}
 
 	if jsonOutput {
-		fmt.Println(string(resp.Data))
-		return
+		// Preserve the single-ProcessInfo shape when exactly one target was
+		// given and one process restarted, so callers parsing the old JSON
+		// keep working.
+		if len(targets) == 1 && len(restarted) == 1 {
+			data, _ := json.Marshal(restarted[0])
+			fmt.Println(string(data))
+		} else {
+			data, _ := json.Marshal(restarted)
+			fmt.Println(string(data))
+		}
+	} else {
+		switch len(restarted) {
+		case 0:
+			// Nothing to render; any errors already printed to stderr.
+		case 1:
+			display.RenderDescribe(os.Stdout, restarted[0])
+		default:
+			display.RenderProcessList(os.Stdout, restarted, false)
+		}
 	}
 
-	// The daemon returns a single ProcessInfo when one process is restarted,
-	// or an array when target is "all". Try single first, then array.
+	if failures > 0 {
+		os.Exit(1)
+	}
+}
+
+// unmarshalRestartResponse tolerates both shapes the daemon returns:
+// a single ProcessInfo for one process, or an array for "all"/multiple.
+func unmarshalRestartResponse(data json.RawMessage) []protocol.ProcessInfo {
 	var single protocol.ProcessInfo
-	if err := json.Unmarshal(resp.Data, &single); err == nil {
-		display.RenderDescribe(os.Stdout, single)
-		return
+	if err := json.Unmarshal(data, &single); err == nil && single.Name != "" {
+		return []protocol.ProcessInfo{single}
 	}
-
 	var multi []protocol.ProcessInfo
-	if err := json.Unmarshal(resp.Data, &multi); err == nil {
-		display.RenderProcessList(os.Stdout, multi, false)
-		return
+	if err := json.Unmarshal(data, &multi); err == nil {
+		return multi
 	}
-
-	// Fallback: just print the raw JSON data.
-	fmt.Println(string(resp.Data))
+	return nil
 }
