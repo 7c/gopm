@@ -456,12 +456,7 @@ func dbg(format string, args ...interface{}) {
 // has a brief window where path does not exist — we tolerate transient open
 // failures by retrying on the next poll rather than bailing out.
 //
-// When GOPM_LOGS_DEBUG=1, the follower emits per-tick diagnostics to stderr
-// and prints a stall warning if no lines are emitted for several seconds.
-// The warning distinguishes two cases: (a) the file is growing on disk but
-// the follower isn't reading it (a client bug), vs (b) the file has stopped
-// growing on disk (a daemon- or process-side stall — typically a partial
-// line buffered in TimestampWriter without a trailing newline).
+// When GOPM_LOGS_DEBUG=1, the follower emits per-tick diagnostics to stderr.
 func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
 	if path == "" {
 		return
@@ -542,17 +537,6 @@ func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	// Stall tracking: warn when many consecutive ticks produce no lines.
-	// We check both the file size (on disk) and our drain output to tell
-	// apart client-side vs producer-side stalls.
-	var (
-		emptyTicks   int
-		lastSize     int64 = -1
-		stallWarned  bool
-		lastStallLog time.Time
-	)
-	const stallTickThreshold = 50 // ~5s at 100ms/tick
-
 	for {
 		select {
 		case <-done:
@@ -566,47 +550,16 @@ func tailWithRotation(path string, done <-chan struct{}, emit func(string)) {
 				dbg("stat(%s) transient err: %v", path, err)
 				continue
 			}
-			size := pathInfo.Size()
 			if logsDebug {
 				dbg("tick path=%s size=%d inode=%v lines=%d",
-					path, size, inodeOf(pathInfo), linesThisTick)
+					path, pathInfo.Size(), inodeOf(pathInfo), linesThisTick)
 			}
 			if !os.SameFile(current, pathInfo) {
 				dbg("ROTATION %s old=%v new=%v", path, inodeOf(current), inodeOf(pathInfo))
 				drain()
-				if openFile(false) {
-					// Reset stall state on successful reopen.
-					emptyTicks = 0
-					stallWarned = false
-				}
+				openFile(false)
 				continue
 			}
-			// Stall detection: same inode, no new lines. Track consecutive
-			// empty ticks and the file size delta.
-			if linesThisTick == 0 {
-				emptyTicks++
-			} else {
-				emptyTicks = 0
-				stallWarned = false
-			}
-			if emptyTicks >= stallTickThreshold && !stallWarned {
-				// Rate-limit the warning so long stalls don't spam stderr.
-				if time.Since(lastStallLog) > 30*time.Second {
-					diskGrowing := lastSize >= 0 && size > lastSize
-					if diskGrowing {
-						fmt.Fprintf(os.Stderr,
-							"WARNING: follower of %s is not reading new data, but the file grew from %d to %d bytes on disk — this is a gopm follower bug, please report.\n",
-							path, lastSize, size)
-					} else {
-						fmt.Fprintf(os.Stderr,
-							"WARNING: no new log lines on %s for %ds; file size unchanged on disk (%d bytes). The managed process may have stopped logging, or may be holding a partial line without a trailing newline (buffered in the daemon's TimestampWriter until a newline arrives).\n",
-							path, emptyTicks/10, size)
-					}
-					stallWarned = true
-					lastStallLog = time.Now()
-				}
-			}
-			lastSize = size
 		}
 	}
 }
