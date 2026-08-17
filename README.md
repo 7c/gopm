@@ -52,6 +52,9 @@ gopm logs api -f
 
 # Stop it
 gopm stop api
+
+# Learn every command, flag and file format in one shot
+gopm docs
 ```
 
 ### Deploy multiple apps
@@ -790,6 +793,54 @@ $ gopm version --json
 ```
 
 When the versions differ, the daemon line shows `(stale!)` in red and the standard WARNING is printed. The legacy `gopm --version` flag is still supported and prints only the CLI version.
+
+### `gopm docs`
+
+The complete capability reference — every command with its flags and examples, plus the concept topics (targets, restart policies, ecosystem and config file formats, logging, exit codes, environment variables, MCP, automation recipes). It is compiled into the binary, so it always describes the binary that printed it.
+
+This is the intended entry point for AI agents: one call, and the agent knows what GoPM can do.
+
+```
+Usage:
+  gopm docs [topic...]
+
+Flags:
+  -l, --list          List topic names and summaries only
+      --color mode    Colorize output: auto|always|never (default: auto)
+      --json          Emit the whole reference as structured JSON
+```
+
+```bash
+# Everything (agents: start here)
+gopm docs
+
+# Structured, for programmatic ingestion
+gopm docs --json | jq -r '.topics[] | "\(.name): \(.summary)"'
+
+# The index, then a single topic
+gopm docs --list
+gopm docs start
+
+# Several topics at once
+gopm docs ecosystem config automation
+
+# Keep colors when paging
+gopm docs --color always | less -R
+```
+
+Color is applied only when stdout is a terminal, so redirected or piped output is plain text. `NO_COLOR` is honored, and `--color never`/`always` override the detection.
+
+> **Maintenance contract — read before changing any command.**
+> `gopm docs` is the reference AI agents act on, so it must never lag the binary. Every new command, flag, config key, exit code, status value, or behavior change must be reflected in the docs topics **in the same commit**:
+>
+> | File | Contents |
+> |------|----------|
+> | `internal/cli/docs_guides.go` | Cross-cutting topics: overview, targets, restart policies, ecosystem, config, logging, files, environment, exit codes, JSON output, MCP, automation |
+> | `internal/cli/docs_commands_process.go` | One topic per process-management command |
+> | `internal/cli/docs_commands_daemon.go` | One topic per daemon-management command |
+> | `internal/cli/docs_commands_tools.go` | Configuration/state and tools commands |
+>
+> `internal/cli/docs_test.go` enforces this: `go test ./internal/cli/` fails when a registered command has no topic, when a flag exists but is undocumented, when a documented flag no longer exists, or when a `See also` points at a topic that does not exist.
 
 ### `gopm pid`
 

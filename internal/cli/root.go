@@ -135,7 +135,7 @@ func newRootCommand() *cobra.Command {
 	add(groupDaemon, pingCmd, statusCmd, killCmd, rebootCmd,
 		installCmd, uninstallCmd, suspendCmd, unsuspendCmd)
 	add(groupConfig, exportCmd, importCmd, resurrectCmd, pm2Cmd)
-	add(groupTool, guiCmd, pidCmd, versionCmd)
+	add(groupTool, guiCmd, pidCmd, versionCmd, docsCmd)
 
 	// Cobra generates help and completion itself; give them a group so they do
 	// not land in the Additional Commands fallback.
