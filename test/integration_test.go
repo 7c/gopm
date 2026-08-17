@@ -267,6 +267,62 @@ func TestIsStopped(t *testing.T) {
 	}
 }
 
+// TestIsErrored covers the current-state check: exit 0 only when status is
+// errored, exit 1 for online/stopped and for unknown processes. Drives the
+// process to errored by exceeding max_restarts.
+func TestIsErrored(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "errchk", "--", "--run-forever")
+	env.WaitForStatus("errchk", "online", 5*time.Second)
+
+	// Online — not errored.
+	if _, _, code := env.Gopm("iserrored", "errchk"); code != 1 {
+		t.Errorf("iserrored should exit 1 for online process, got %d", code)
+	}
+
+	env.MustGopm("stop", "errchk")
+	env.WaitForStatus("errchk", "stopped", 5*time.Second)
+
+	// Stopped — also not errored.
+	if _, _, code := env.Gopm("iserrored", "errchk"); code != 1 {
+		t.Errorf("iserrored should exit 1 for stopped process, got %d", code)
+	}
+
+	// Drive a fresh process into errored by exhausting max_restarts.
+	env.MustGopm("start", env.TestappBin, "--name", "boom",
+		"--autorestart", "on-failure",
+		"--max-restarts", "1",
+		"--restart-delay", "300ms",
+		"--", "--crash-after", "300ms", "--exit-code", "1")
+	env.WaitForStatus("boom", "errored", 20*time.Second)
+
+	if _, _, code := env.Gopm("iserrored", "boom"); code != 0 {
+		t.Errorf("iserrored should exit 0 for errored process, got %d", code)
+	}
+
+	// Unknown process.
+	if _, _, code := env.Gopm("iserrored", "nonexistent"); code != 1 {
+		t.Errorf("iserrored should exit 1 for unknown process, got %d", code)
+	}
+
+	// --json exposes the status_reason.
+	out, _, _ := env.Gopm("iserrored", "boom", "--json")
+	var payload struct {
+		Status       string `json:"status"`
+		StatusReason string `json:"status_reason"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("parse iserrored --json: %v\noutput: %s", err, out)
+	}
+	if payload.Status != "errored" {
+		t.Errorf("--json status = %q, want errored", payload.Status)
+	}
+	if payload.StatusReason == "" {
+		t.Error("--json status_reason should be non-empty for an errored process")
+	}
+}
+
 // TestIsProcess covers the contract isprocess adds over isrunning: existence in
 // any state, and a distinct exit code when the daemon cannot be reached.
 func TestIsProcess(t *testing.T) {

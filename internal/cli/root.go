@@ -131,7 +131,7 @@ func newRootCommand() *cobra.Command {
 		}
 	}
 	add(groupProcess, startCmd, stopCmd, restartCmd, deleteCmd, listCmd, describeCmd,
-		isrunningCmd, isprocessCmd, isstoppedCmd, logsCmd, flushCmd, watchCmd, statsCmd)
+		isrunningCmd, isprocessCmd, isstoppedCmd, iserroredCmd, logsCmd, flushCmd, watchCmd, statsCmd)
 	add(groupDaemon, pingCmd, statusCmd, killCmd, rebootCmd,
 		installCmd, uninstallCmd, suspendCmd, unsuspendCmd)
 	add(groupConfig, exportCmd, importCmd, resurrectCmd, pm2Cmd)

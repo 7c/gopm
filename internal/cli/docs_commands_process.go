@@ -16,6 +16,7 @@ func docProcessCommandTopics() []docTopic {
 		docTopicIsRunning(),
 		docTopicIsProcess(),
 		docTopicIsStopped(),
+		docTopicIsErrored(),
 		docTopicLogs(),
 		docTopicFlush(),
 		docTopicWatch(),
@@ -233,7 +234,31 @@ func docTopicIsStopped() docTopic {
 			{Desc: "Was this process ever stopped?", Cmd: "gopm isstopped api && echo yes"},
 			{Desc: "Distinguish never-stopped from currently-online-but-once-stopped", Cmd: "gopm isstopped api --json | jq '.stop_count'"},
 		},
-		SeeAlso: []string{"isrunning", "isprocess", "describe", "exit-codes"},
+		SeeAlso: []string{"isrunning", "isprocess", "iserrored", "describe", "exit-codes"},
+	}
+}
+
+func docTopicIsErrored() docTopic {
+	return docTopic{
+		Name:    "iserrored",
+		Group:   docGroupProcess,
+		Command: "iserrored",
+		Summary: "Check if a process is currently errored (exit code based)",
+		Usage:   []string{"gopm iserrored <name|id>"},
+		Body: []string{
+			"Current-state check: exit 0 when the process's status is `errored`, exit 1 for any other status (or when the process does not exist).",
+			"A process becomes errored when the supervisor gives up (max_restarts exceeded, or an exit code matched `no_restart_on_exit`) or when a user-restart's Start half fails.",
+		},
+		Notes: []string{
+			"Exit 0 — status is errored.",
+			"Exit 1 — status is anything else, or the process does not exist.",
+			"--json prints the full IsRunningResult, including status_reason with the actual cause.",
+		},
+		Examples: []docExample{
+			{Desc: "Page when the supervisor gives up", Cmd: "gopm iserrored api && curl -X POST https://alerts/api/errored"},
+			{Desc: "Read the reason", Cmd: "gopm iserrored api --json | jq -r '.status_reason'"},
+		},
+		SeeAlso: []string{"isrunning", "isstopped", "isprocess", "describe", "restart-policies"},
 	}
 }
 
