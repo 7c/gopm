@@ -78,6 +78,50 @@ func TestRestartProcess(t *testing.T) {
 	}
 }
 
+// TestRestartFailureMarksErrored verifies that when a `gopm restart` cannot
+// start the new instance (missing binary, bad interpreter, etc.), the process
+// ends up as `errored` with a status_reason that reflects the real cause —
+// not left as the transient `stopped (restarting)` that used to persist
+// forever because the auto-restart supervisor doesn't cycle on failed
+// user-initiated restarts.
+func TestRestartFailureMarksErrored(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Copy the testapp binary so we can delete it out from under gopm
+	// without disturbing other tests.
+	bin := filepath.Join(env.Home, "temp-testapp")
+	src, err := os.ReadFile(env.TestappBin)
+	if err != nil {
+		t.Fatalf("read testapp: %v", err)
+	}
+	if err := os.WriteFile(bin, src, 0755); err != nil {
+		t.Fatalf("write temp binary: %v", err)
+	}
+
+	env.MustGopm("start", bin, "--name", "flaky", "--", "--run-forever")
+	env.WaitForStatus("flaky", "online", 5*time.Second)
+
+	// Remove the binary so the Start after Stop in handleRestart fails.
+	if err := os.Remove(bin); err != nil {
+		t.Fatalf("remove temp binary: %v", err)
+	}
+
+	// gopm restart will not error at the RPC level — the daemon still
+	// returns success with the (now errored) ProcessInfo. We just care
+	// about the resulting persisted state.
+	env.Gopm("restart", "flaky")
+
+	env.WaitForStatus("flaky", "errored", 5*time.Second)
+
+	reason := env.GetProcessField("flaky", "status_reason")
+	if !strings.Contains(reason, "restart failed") {
+		t.Errorf("status_reason = %q, want it to contain %q", reason, "restart failed")
+	}
+	if reason == "restarting" {
+		t.Errorf("status_reason left as the transient %q — display would show 'stopped (restarting)' forever", reason)
+	}
+}
+
 func TestDeleteProcess(t *testing.T) {
 	env := NewTestEnv(t)
 

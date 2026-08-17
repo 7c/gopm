@@ -514,6 +514,17 @@ func (d *Daemon) handleRestart(params json.RawMessage) protocol.Response {
 		p.CloseLogWriters()
 		if err := p.Start("user-restart"); err != nil {
 			slog.Error("failed to restart process", "name", p.info.Name, "error", err)
+			// The previous instance is already stopped by Stop("restarting")
+			// above, so status_reason is currently the transient "restarting".
+			// Leaving that in place makes `gopm list` render an eternal
+			// "stopped (restarting)" for something that is not restarting,
+			// and the auto-restart supervisor won't rescue it (it only cycles
+			// on process exits, not on failed user-initiated Starts).
+			// Promote to errored with the real cause so the failure is
+			// visible in list/watch and status_reason is honest.
+			p.MarkExited(-1, protocol.StatusErrored)
+			p.SetReason(fmt.Sprintf("restart failed: %v", err))
+			results = append(results, p.Info())
 			continue
 		}
 		go d.monitor(p)
