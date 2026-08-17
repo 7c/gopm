@@ -185,6 +185,88 @@ func TestIsRunning(t *testing.T) {
 	}
 }
 
+// TestIsOnlineAlias verifies isonline is a functional alias for isrunning —
+// same exit codes, same JSON payload, same daemon call.
+func TestIsOnlineAlias(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "chk", "--", "--run-forever")
+	env.WaitForStatus("chk", "online", 5*time.Second)
+
+	_, _, code := env.Gopm("isonline", "chk")
+	if code != 0 {
+		t.Errorf("isonline should exit 0 for online process, got %d", code)
+	}
+
+	env.MustGopm("stop", "chk")
+	env.WaitForStatus("chk", "stopped", 5*time.Second)
+
+	_, _, code = env.Gopm("isonline", "chk")
+	if code != 1 {
+		t.Errorf("isonline should exit 1 for stopped process, got %d", code)
+	}
+
+	// The alias should return the same --json payload as isrunning does.
+	env.MustGopm("start", env.TestappBin, "--name", "chk2", "--", "--run-forever")
+	env.WaitForStatus("chk2", "online", 5*time.Second)
+	runningJSON, _, _ := env.Gopm("isrunning", "chk2", "--json")
+	onlineJSON, _, _ := env.Gopm("isonline", "chk2", "--json")
+	if runningJSON != onlineJSON {
+		t.Errorf("isonline --json diverged from isrunning --json:\n  isrunning: %s  isonline:  %s", runningJSON, onlineJSON)
+	}
+}
+
+// TestIsStopped covers the contract: exit 0 once a Stop has ever been
+// requested (stop_count > 0), exit 1 for a fresh never-stopped process or one
+// gopm does not know about. Currently-online-but-once-stopped still returns 0
+// — the check is historical, not "stopped right now".
+func TestIsStopped(t *testing.T) {
+	env := NewTestEnv(t)
+
+	env.MustGopm("start", env.TestappBin, "--name", "stopchk", "--", "--run-forever")
+	env.WaitForStatus("stopchk", "online", 5*time.Second)
+
+	// Fresh process — never stopped.
+	_, _, code := env.Gopm("isstopped", "stopchk")
+	if code != 1 {
+		t.Errorf("isstopped should exit 1 for a never-stopped process, got %d", code)
+	}
+
+	env.MustGopm("stop", "stopchk")
+	env.WaitForStatus("stopchk", "stopped", 5*time.Second)
+
+	_, _, code = env.Gopm("isstopped", "stopchk")
+	if code != 0 {
+		t.Errorf("isstopped should exit 0 after a user stop, got %d", code)
+	}
+
+	// Historical: restart it, and isstopped must still say yes.
+	env.MustGopm("restart", "stopchk")
+	env.WaitForStatus("stopchk", "online", 5*time.Second)
+	_, _, code = env.Gopm("isstopped", "stopchk")
+	if code != 0 {
+		t.Errorf("isstopped must remain 0 for a once-stopped-now-online process (stop_count > 0), got %d", code)
+	}
+
+	// Unknown process.
+	_, _, code = env.Gopm("isstopped", "nonexistent")
+	if code != 1 {
+		t.Errorf("isstopped should exit 1 for unknown process, got %d", code)
+	}
+
+	// --json exposes the stop_count.
+	out, _, _ := env.Gopm("isstopped", "stopchk", "--json")
+	var payload struct {
+		StopCount int `json:"stop_count"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("parse isstopped --json: %v\noutput: %s", err, out)
+	}
+	if payload.StopCount < 1 {
+		t.Errorf("stop_count = %d in --json, expected >= 1 after a user stop", payload.StopCount)
+	}
+}
+
 // TestIsProcess covers the contract isprocess adds over isrunning: existence in
 // any state, and a distinct exit code when the daemon cannot be reached.
 func TestIsProcess(t *testing.T) {

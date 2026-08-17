@@ -15,6 +15,7 @@ func docProcessCommandTopics() []docTopic {
 		docTopicDescribe(),
 		docTopicIsRunning(),
 		docTopicIsProcess(),
+		docTopicIsStopped(),
 		docTopicLogs(),
 		docTopicFlush(),
 		docTopicWatch(),
@@ -195,16 +196,44 @@ func docTopicIsRunning() docTopic {
 		Command: "isrunning",
 		Summary: "Check if a process is running (exit code based)",
 		Usage:   []string{"gopm isrunning <name|id>"},
+		Aliases: []string{"isonline"},
 		Body: []string{
 			"Answers \"is this online right now\" through the exit code: 0 when the process is running, 1 when it exists but is stopped or errored, and 1 when it does not exist at all. Use `isprocess` when those last two cases must be told apart.",
 			"This command starts the daemon if it is not already running.",
+			"`isonline` is an alias — same command, same exit codes.",
 		},
 		Examples: []docExample{
 			{Desc: "Guard a dependent action", Cmd: "gopm isrunning api && curl -sf http://localhost:3000/health"},
 			{Desc: "Restart only if it is up", Cmd: "gopm isrunning api && gopm restart api"},
+			{Desc: "Same thing, via the alias", Cmd: "gopm isonline api"},
 			{Desc: "Structured answer", Cmd: "gopm isrunning api --json"},
 		},
-		SeeAlso: []string{"isprocess", "exit-codes", "describe"},
+		SeeAlso: []string{"isprocess", "isstopped", "exit-codes", "describe"},
+	}
+}
+
+func docTopicIsStopped() docTopic {
+	return docTopic{
+		Name:    "isstopped",
+		Group:   docGroupProcess,
+		Command: "isstopped",
+		Summary: "Check if a stop was ever requested for a process (exit code based)",
+		Usage:   []string{"gopm isstopped <name|id>"},
+		Body: []string{
+			"Answers \"has anyone ever asked to stop this process\" — historical, not current. It uses `stop_count > 0`, which the daemon increments every time `Process.Stop()` runs (user stop, restart-internal stop, delete-internal stop, daemon shutdown/reboot).",
+			"A process that was stopped and then restarted still exits 0 here; use `isrunning`/`isonline` for the current-state question.",
+			"Counts are per-daemon lifetime: a `gopm kill` (which loses in-memory counters even though it persists state) resets `stop_count` back to 0 on the next boot.",
+		},
+		Notes: []string{
+			"Exit 0 — a stop has been requested at least once (stop_count > 0).",
+			"Exit 1 — no stop has ever been requested, or the process does not exist.",
+			"--json prints the full IsRunningResult, including stop_count and status_reason.",
+		},
+		Examples: []docExample{
+			{Desc: "Was this process ever stopped?", Cmd: "gopm isstopped api && echo yes"},
+			{Desc: "Distinguish never-stopped from currently-online-but-once-stopped", Cmd: "gopm isstopped api --json | jq '.stop_count'"},
+		},
+		SeeAlso: []string{"isrunning", "isprocess", "describe", "exit-codes"},
 	}
 }
 

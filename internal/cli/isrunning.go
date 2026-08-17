@@ -11,9 +11,10 @@ import (
 )
 
 var isrunningCmd = &cobra.Command{
-	Use:   "isrunning <name|id>",
-	Short: "Check if a process is running (exit code based)",
-	Args:  cobra.ExactArgs(1),
+	Use:     "isrunning <name|id>",
+	Aliases: []string{"isonline"},
+	Short:   "Check if a process is running (exit code based)",
+	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		target := args[0]
 

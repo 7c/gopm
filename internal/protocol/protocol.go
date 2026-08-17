@@ -216,15 +216,23 @@ type PingResult struct {
 	ConfigSource string `json:"config_source,omitempty"`
 }
 
-// IsRunningResult is returned by the "isrunning" method.
+// IsRunningResult is returned by the "isrunning" method. It's shared with
+// `isstopped` (via StopCount) and `isprocess`, so fields are additive: adding
+// a field never breaks an older CLI, dropping one would.
 type IsRunningResult struct {
-	Name     string `json:"name"`
-	Running  bool   `json:"running"`
-	Status   Status `json:"status"`
-	PID      int    `json:"pid"`
-	Uptime   string `json:"uptime,omitempty"`
-	ExitCode int    `json:"exit_code,omitempty"`
-	Restarts int    `json:"restarts,omitempty"`
+	Name         string `json:"name"`
+	Running      bool   `json:"running"`
+	Status       Status `json:"status"`
+	StatusReason string `json:"status_reason,omitempty"`
+	PID          int    `json:"pid"`
+	Uptime       string `json:"uptime,omitempty"`
+	ExitCode     int    `json:"exit_code,omitempty"`
+	Restarts     int    `json:"restarts,omitempty"`
+	// StopCount is the lifetime count of Stop() calls on this process,
+	// including user stops, restart-internal stops, and daemon-triggered
+	// stops. `isstopped` uses `StopCount > 0` to answer "has a stop ever
+	// been requested".
+	StopCount int `json:"stop_count"`
 }
 
 // StatsParams are the parameters for the "stats" method.

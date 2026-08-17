@@ -624,13 +624,15 @@ func (d *Daemon) handleIsRunning(params json.RawMessage) protocol.Response {
 
 	info := proc.Info()
 	result := protocol.IsRunningResult{
-		Name:     info.Name,
-		Running:  info.Status == protocol.StatusOnline,
-		Status:   info.Status,
-		PID:      info.PID,
-		Uptime:   protocol.FormatDuration(time.Since(info.Uptime)),
-		ExitCode: info.ExitCode,
-		Restarts: info.Restarts,
+		Name:         info.Name,
+		Running:      info.Status == protocol.StatusOnline,
+		Status:       info.Status,
+		StatusReason: info.StatusReason,
+		PID:          info.PID,
+		Uptime:       protocol.FormatDuration(time.Since(info.Uptime)),
+		ExitCode:     info.ExitCode,
+		Restarts:     info.Restarts,
+		StopCount:    info.StopCount,
 	}
 	return successResponse(result)
 }
