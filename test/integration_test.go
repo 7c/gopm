@@ -308,6 +308,113 @@ func TestSaveAndResurrect(t *testing.T) {
 	}
 }
 
+// TestResurrectResumesRestartDelay is a regression test for the case where
+// `gopm reboot` (or any daemon restart) fires while a supervised process is
+// inside its restart-delay window. That transient state persists as
+// status=stopped + in_restart_delay=true. Prior to the fix, resurrect only
+// started processes with status=online, so the process was silently orphaned
+// as "stopped" until a manual `gopm start` — despite autorestart=always and
+// no user-issued stop.
+//
+// We reproduce the on-disk state directly rather than racing against real
+// timing, then start a fresh daemon (any CLI call auto-starts it), which
+// auto-resurrects from dump.json.
+func TestResurrectResumesRestartDelay(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Craft the exact dump.json state that used to orphan the process:
+	// mid-restart-delay when the daemon went down.
+	dump := []map[string]interface{}{
+		{
+			"id":               0,
+			"name":             "delayed",
+			"command":          env.TestappBin,
+			"args":             []string{"--run-forever"},
+			"cwd":              env.Home,
+			"env":              map[string]string{},
+			"status":           "stopped",
+			"in_restart_delay": true,
+			"pid":              0,
+			"restart_policy": map[string]interface{}{
+				"autorestart":   "always",
+				"max_restarts":  0,
+				"min_uptime":    "5s",
+				"restart_delay": "500ms",
+				"exp_backoff":   false,
+				"max_delay":     "30s",
+				"kill_signal":   15,
+				"kill_timeout":  "5s",
+			},
+			"log_out":      filepath.Join(env.Home, "logs", "delayed-out.log"),
+			"log_err":      filepath.Join(env.Home, "logs", "delayed-err.log"),
+			"max_log_size": 104857600,
+		},
+	}
+	data, err := json.Marshal(dump)
+	if err != nil {
+		t.Fatalf("marshal dump: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(env.Home, "dump.json"), data, 0644); err != nil {
+		t.Fatalf("write dump.json: %v", err)
+	}
+
+	// Any CLI call auto-starts the daemon, which auto-resurrects on boot.
+	env.MustGopm("ping")
+
+	// Before the fix, the process stayed "stopped" indefinitely.
+	env.WaitForStatus("delayed", "online", 10*time.Second)
+
+	if pid := env.GetProcessField("delayed", "pid"); pid == "" || pid == "0" {
+		t.Errorf("expected non-zero pid after resurrect, got %q", pid)
+	}
+}
+
+// TestStopDuringRestartDelaySurvivesDaemonRestart is the counterpart to
+// TestResurrectResumesRestartDelay: when the user stops a crash-looping
+// process and the daemon then goes down (kill / crash / reboot), the process
+// must NOT come back on resurrect. The resume-on-in-restart-delay fix would
+// otherwise revive it, so Stop() has to eagerly clear InRestartDelay before
+// SaveState observes it.
+func TestStopDuringRestartDelaySurvivesDaemonRestart(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// exit-after 100ms + restart-delay 3s means the process spends almost
+	// its entire life inside the restart-delay window — trivially catches
+	// the "user stops while in delay" case.
+	env.MustGopm("start", env.TestappBin, "--name", "stopdelay",
+		"--autorestart", "always",
+		"--restart-delay", "3s",
+		"--", "--exit-after", "100ms")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if env.GetProcessField("stopdelay", "in_restart_delay") == "true" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if env.GetProcessField("stopdelay", "in_restart_delay") != "true" {
+		t.Fatal("process never entered restart-delay window")
+	}
+
+	env.MustGopm("stop", "stopdelay")
+	env.WaitForStatus("stopdelay", "stopped", 3*time.Second)
+
+	env.MustGopm("kill")
+	env.WaitForDaemonStopped(5 * time.Second)
+	env.MustGopm("ping")
+
+	// A brief settle so a would-be resurrect-started process has time to
+	// show up as online. The stop must stick.
+	time.Sleep(1 * time.Second)
+	if status := env.GetProcessField("stopdelay", "status"); status != "stopped" {
+		t.Errorf("status = %q after daemon restart, want stopped — user-stop was undone by resurrect", status)
+	}
+	if env.GetProcessField("stopdelay", "in_restart_delay") == "true" {
+		t.Error("in_restart_delay = true after user stop + daemon restart")
+	}
+}
+
 func TestAutoRestartOnFailure(t *testing.T) {
 	env := NewTestEnv(t)
 

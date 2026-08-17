@@ -321,6 +321,13 @@ func (p *Process) Stop(reason string) error {
 			slog.Info("cancelled pending supervisor restart",
 				"name", p.info.Name, "instance", p.instance)
 		}
+		// Clear the flag eagerly under the same lock that SaveState reads.
+		// Without this, a SaveState racing with the supervisor goroutine's
+		// post-cancel cleanup could persist InRestartDelay=true for a
+		// user-stopped process — which resurrect would then interpret as
+		// "resume this on daemon startup" and start it against the user's
+		// intent.
+		p.info.InRestartDelay = false
 	}
 
 	if p.info.Status != protocol.StatusOnline || p.cmd == nil {

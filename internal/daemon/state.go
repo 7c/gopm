@@ -88,8 +88,27 @@ func LoadState() ([]protocol.ProcessInfo, error) {
 	return infos, nil
 }
 
+// shouldResurrectAsRunning reports whether a saved ProcessInfo should be
+// started on resurrect rather than merely registered.
+//
+// A saved status of "online" is the obvious case. A saved
+// InRestartDelay=true is the subtler case: the supervisor had already
+// decided to restart the process when state was captured (typically because
+// a `gopm reboot` fired inside the restart-delay window between an exit and
+// the scheduled restart). Without this, such a process is persisted as
+// "stopped", resurrect skips it, and it stays orphaned until a manual
+// `gopm start` — even though autorestart is "always" and the user never
+// asked for it to stop.
+func shouldResurrectAsRunning(info protocol.ProcessInfo) bool {
+	if info.Status == protocol.StatusOnline {
+		return true
+	}
+	return info.InRestartDelay
+}
+
 // ResurrectProcesses restores all processes from dump.json.
-// Online processes are started; stopped/errored are registered without starting.
+// Online (or mid-restart-delay) processes are started; other stopped/errored
+// entries are registered without starting.
 func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 	atomic.AddUint64(&d.counters.resurrectCount, 1)
 	infos, err := LoadState()
@@ -99,9 +118,15 @@ func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 
 	var resurrected []protocol.ProcessInfo
 	for _, info := range infos {
-		if info.Status == protocol.StatusOnline {
+		if shouldResurrectAsRunning(info) {
+			reason := "resurrect"
+			if info.Status != protocol.StatusOnline {
+				reason = "resurrect-restart-delay"
+				slog.Info("resurrecting process caught mid restart-delay",
+					"name", info.Name, "saved_status", info.Status)
+			}
 			params := infoToStartParams(info)
-			proc, err := d.startProcessWithReason(params, "resurrect")
+			proc, err := d.startProcessWithReason(params, reason)
 			if err != nil {
 				slog.Error("failed to resurrect process", "name", info.Name, "error", err)
 				// Register as errored so the process remains visible and
