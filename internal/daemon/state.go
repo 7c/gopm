@@ -106,26 +106,34 @@ func shouldResurrectAsRunning(info protocol.ProcessInfo) bool {
 	return info.InRestartDelay
 }
 
-// ResurrectProcesses restores all processes from dump.json.
-// Online (or mid-restart-delay) processes are started; other stopped/errored
-// entries are registered without starting.
+// ReconcileOrphansFromDump kills any live process still carrying the
+// GOPM_MANAGED_NAME=<name> marker (Linux) or matching argv (Darwin) for
+// every name in dump.json. Called ONCE at daemon startup, before the
+// first ResurrectProcesses — never from the manual `gopm resurrect` RPC
+// path (that would kill the daemon's own live children, since they carry
+// the marker too).
 //
-// Before spawning, reconcileOrphans is called for every saved name so that
-// any child that survived a previous daemon session (SIGKILL/OOM/host crash
-// left them reparented to init) is killed. Without this step, resurrect
-// would silently create a second copy on top of each orphan — port binders
-// crash-loop with "address already in use", non-binders duplicate work.
-func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
-	atomic.AddUint64(&d.counters.resurrectCount, 1)
+// Fixes the "duplicate process after daemon crash" bug: previous daemon
+// died without running its shutdown path (SIGKILL/OOM/host crash), its
+// children survived as orphans, and without this pass the fresh daemon
+// would stack a second copy on each one.
+func (d *Daemon) ReconcileOrphansFromDump() {
 	infos, err := LoadState()
 	if err != nil {
-		return nil, err
+		slog.Error("reconcile: cannot load dump.json — skipping orphan scan", "error", err)
+		return
+	}
+	// Safety: this function must only run when the process map is empty.
+	// If called with active children, we'd kill our own.
+	d.mu.RLock()
+	activeCount := len(d.processes)
+	d.mu.RUnlock()
+	if activeCount > 0 {
+		slog.Warn("reconcile: skipped — process map is non-empty",
+			"active_processes", activeCount)
+		return
 	}
 
-	// Reconcile ALL saved names (not just the ones we're about to spawn):
-	// a "stopped" entry with a matching orphan means a prior session's
-	// child outlived the state save — the user's intent (stopped) says it
-	// shouldn't be running, so kill it before we register the entry.
 	totalKilled := 0
 	for _, info := range infos {
 		killTimeout := info.RestartPolicy.KillTimeout.Duration
@@ -134,8 +142,25 @@ func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 		}
 	}
 	if totalKilled > 0 {
-		slog.Info("resurrect: reconcile summary — orphan pgroups killed",
+		slog.Info("reconcile: startup summary — orphan pgroups killed",
 			"total_pgids_killed", totalKilled, "process_entries", len(infos))
+	}
+}
+
+// ResurrectProcesses restores all processes from dump.json.
+// Online (or mid-restart-delay) processes are started; other stopped/errored
+// entries are registered without starting.
+//
+// Orphan reconciliation is NOT performed here — it lives in
+// ReconcileOrphansFromDump, called once at daemon startup. Calling
+// reconcile from every ResurrectProcesses invocation would kill the
+// daemon's own live children when a user runs `gopm resurrect` against
+// a running daemon.
+func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
+	atomic.AddUint64(&d.counters.resurrectCount, 1)
+	infos, err := LoadState()
+	if err != nil {
+		return nil, err
 	}
 
 	var resurrected []protocol.ProcessInfo

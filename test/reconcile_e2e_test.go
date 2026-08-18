@@ -161,6 +161,54 @@ func containsStr(hay, needle string) bool {
 	return false
 }
 
+// TestManualResurrectDoesNotKillLiveChildren is the regression test for
+// the bug that shipped in 0.0.60: reconcile ran inside every
+// ResurrectProcesses call, including the RPC-triggered manual `gopm
+// resurrect`. On a live daemon that path found the daemon's OWN live
+// children as "orphans" (they carry GOPM_MANAGED_NAME) and SIGTERM'd
+// them, leaving stale entries and forcing supervisor-restart churn.
+//
+// The fix moves reconcile into ReconcileOrphansFromDump, called only
+// once at daemon startup, gated on an empty process map.
+func TestManualResurrectDoesNotKillLiveChildren(t *testing.T) {
+	env := NewTestEnv(t)
+
+	// Bring a process online normally.
+	env.MustGopm("start", env.TestappBin, "--name", "live-proc", "--", "--run-forever")
+	env.WaitForStatus("live-proc", "online", 5*time.Second)
+
+	pidBefore := env.GetProcessField("live-proc", "pid")
+	if pidBefore == "" || pidBefore == "0" {
+		t.Fatalf("expected non-zero pid before manual resurrect, got %q", pidBefore)
+	}
+
+	// Manual resurrect on a live daemon — must be a no-op for already-loaded
+	// processes, not a reconcile-and-respawn.
+	env.MustGopm("resurrect")
+
+	// Give any hypothetical reconcile+respawn time to fire.
+	time.Sleep(1 * time.Second)
+
+	pidAfter := env.GetProcessField("live-proc", "pid")
+	if pidAfter != pidBefore {
+		t.Fatalf("live process PID changed across manual resurrect: %s → %s (reconcile killed our own child)",
+			pidBefore, pidAfter)
+	}
+
+	// daemon.log should NOT contain any "reconcile: orphan(s) detected"
+	// lines for our live process, and should record that reconcile was
+	// skipped when the RPC hit ResurrectProcesses.
+	data, err := os.ReadFile(filepath.Join(env.Home, "daemon.log"))
+	if err != nil {
+		t.Fatalf("read daemon.log: %v", err)
+	}
+	s := string(data)
+	if containsStr(s, "reconcile: orphan(s) detected") &&
+		containsStr(s, "name=live-proc") {
+		t.Errorf("daemon.log shows reconcile targeting the live process — the fix regressed\n---\n%s\n---", s)
+	}
+}
+
 // pidEffectivelyGone returns true when pid is either fully gone (ESRCH) or a
 // zombie (dead but not yet reaped). We're not necessarily the orphan's
 // parent (we spawned it but the daemon didn't adopt it), so a zombie can

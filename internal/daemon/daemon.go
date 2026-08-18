@@ -187,6 +187,12 @@ func Run(version string, configFlag string, debug bool, logLevelArg string) {
 
 	slog.Info("daemon started", "pid", os.Getpid(), "socket", sockPath, "version", Version)
 
+	// Before auto-resurrect, kill any orphaned children from a previous
+	// daemon session that survived an uncleanly-exited daemon (SIGKILL,
+	// OOM, host crash). This is safe to call only when d.processes is
+	// empty — which it is here, since no RPC handler has run yet.
+	d.ReconcileOrphansFromDump()
+
 	// Auto-load saved process list from dump.json
 	if resurrected, err := d.ResurrectProcesses(); err != nil {
 		slog.Error("failed to resurrect processes on startup", "error", err)
