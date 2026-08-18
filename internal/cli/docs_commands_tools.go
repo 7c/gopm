@@ -90,12 +90,14 @@ func docTopicResurrect() docTopic {
 		Body: []string{
 			"Restarts every process that was online when state was last saved, reading $GOPM_HOME/dump.json. State is written automatically after each mutation, so there is no separate save step.",
 			"The daemon also resurrects on its own startup; this command is for restoring by hand after a `gopm kill`, and it is the ExecStart of the systemd unit.",
+			"Before spawning, resurrect reconciles orphans: for every saved name it scans the OS for any live process still carrying the GOPM_MANAGED_NAME=<name> marker (Linux: /proc/<pid>/environ; Darwin: matching argv via KERN_PROCARGS2, because SIP hides env). Matching pgroups are SIGTERM'd, then SIGKILL'd after the process's kill_timeout. This prevents a fresh spawn from stacking on top of a child that survived a previous daemon crash (SIGKILL/OOM/host reboot). Every step is logged to daemon.log — search for `reconcile:` to see what happened.",
 		},
 		Examples: []docExample{
 			{Desc: "Restore after stopping the daemon", Cmd: "gopm kill\ngopm resurrect"},
 			{Desc: "How many came back", Cmd: "gopm resurrect --json | jq length"},
+			{Desc: "Inspect the reconcile trace after a daemon startup", Cmd: "gopm logs -d | grep reconcile:"},
 		},
-		SeeAlso: []string{"kill", "reboot", "install", "files"},
+		SeeAlso: []string{"kill", "reboot", "install", "files", "environment"},
 	}
 }
 

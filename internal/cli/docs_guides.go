@@ -269,6 +269,7 @@ func docTopicEnvironment() docTopic {
 			"SUDO_USER — read by `gopm install` to pick the service user when --user is not given.",
 			"HOME — used to locate ~/.gopm when GOPM_HOME is unset; if it is unset the passwd entry is consulted, and gopm exits with an error if neither resolves.",
 			"A managed process inherits the daemon's environment plus whatever `--env`/`env` adds. Variables exported in the shell that ran `gopm start` are NOT forwarded automatically — pass them with --env.",
+			"GOPM_MANAGED_NAME and GOPM_MANAGED_ID are injected into every managed child. They are the identity marker resurrect uses on the next daemon startup to find and kill orphaned children from a previous session (see the resurrect topic); user-supplied values for these two names are stripped so the marker cannot be forged.",
 		},
 		Examples: []docExample{
 			{Desc: "Pass variables explicitly to the child", Cmd: "gopm start ./api --name api --env NODE_ENV=production --env PORT=3000"},

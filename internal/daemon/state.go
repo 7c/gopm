@@ -109,11 +109,33 @@ func shouldResurrectAsRunning(info protocol.ProcessInfo) bool {
 // ResurrectProcesses restores all processes from dump.json.
 // Online (or mid-restart-delay) processes are started; other stopped/errored
 // entries are registered without starting.
+//
+// Before spawning, reconcileOrphans is called for every saved name so that
+// any child that survived a previous daemon session (SIGKILL/OOM/host crash
+// left them reparented to init) is killed. Without this step, resurrect
+// would silently create a second copy on top of each orphan — port binders
+// crash-loop with "address already in use", non-binders duplicate work.
 func (d *Daemon) ResurrectProcesses() ([]protocol.ProcessInfo, error) {
 	atomic.AddUint64(&d.counters.resurrectCount, 1)
 	infos, err := LoadState()
 	if err != nil {
 		return nil, err
+	}
+
+	// Reconcile ALL saved names (not just the ones we're about to spawn):
+	// a "stopped" entry with a matching orphan means a prior session's
+	// child outlived the state save — the user's intent (stopped) says it
+	// shouldn't be running, so kill it before we register the entry.
+	totalKilled := 0
+	for _, info := range infos {
+		killTimeout := info.RestartPolicy.KillTimeout.Duration
+		if killed := reconcileOrphans(fingerprintFor(info), killTimeout); killed > 0 {
+			totalKilled += killed
+		}
+	}
+	if totalKilled > 0 {
+		slog.Info("resurrect: reconcile summary — orphan pgroups killed",
+			"total_pgids_killed", totalKilled, "process_entries", len(infos))
 	}
 
 	var resurrected []protocol.ProcessInfo

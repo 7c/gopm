@@ -249,14 +249,21 @@ func (p *Process) Start(reason string) error {
 	cmd.Stderr = p.stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// Build environment
-	if len(p.info.Env) > 0 {
-		env := os.Environ()
-		for k, v := range p.info.Env {
-			env = append(env, fmt.Sprintf("%s=%s", k, v))
+	// Build environment. Always inject GOPM_MANAGED_NAME and GOPM_MANAGED_ID
+	// so orphan reconciliation on daemon startup can identify our children
+	// unambiguously by walking /proc/*/environ (Linux) or ps -E (Darwin),
+	// even after a daemon crash reparents them to init.
+	env := os.Environ()
+	for k, v := range p.info.Env {
+		if k == managedNameEnv || k == managedIDEnv {
+			// Never let a user-supplied value shadow our identity marker.
+			continue
 		}
-		cmd.Env = env
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
+	env = append(env, fmt.Sprintf("%s=%s", managedNameEnv, p.info.Name))
+	env = append(env, fmt.Sprintf("%s=%d", managedIDEnv, p.info.ID))
+	cmd.Env = env
 
 	if err := cmd.Start(); err != nil {
 		p.stdout.Underlying().Close()
