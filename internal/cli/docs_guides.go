@@ -244,6 +244,7 @@ func docTopicFiles() docTopic {
 		Notes: []string{
 			"$GOPM_HOME/gopm.sock — Unix domain socket the CLI talks to; a stale socket from a dead daemon is cleaned up automatically.",
 			"$GOPM_HOME/daemon.pid — daemon PID file, also referenced by the systemd unit.",
+			"$GOPM_HOME/daemon.lock — exclusive flock file held by the running daemon; guarantees at most one daemon per $GOPM_HOME. Released automatically on process exit (kernel FD close), so nothing to clean up after a crash.",
 			"$GOPM_HOME/dump.json — persisted process list, rewritten after every mutation and replayed by resurrect.",
 			"$GOPM_HOME/daemon.log — daemon's own log (`gopm logs -d`).",
 			"$GOPM_HOME/logs/ — per-process stdout/stderr files and their rotations.",

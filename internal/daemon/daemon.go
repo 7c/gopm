@@ -92,6 +92,11 @@ type Daemon struct {
 
 	logWriter *logwriter.RotatingWriter
 
+	// lockFile holds the exclusive flock on $GOPM_HOME/daemon.lock. Kept
+	// alive for the daemon's lifetime so GC doesn't close the FD (which
+	// would release the lock). Never nil in normal operation.
+	lockFile *os.File
+
 	stateSaveLogMu   sync.Mutex
 	stateSaveLogLast time.Time
 	stateSaveLogSeen int
@@ -104,6 +109,25 @@ func Run(version string, configFlag string, debug bool, logLevelArg string) {
 	Version = version
 	home := protocol.GopmHome()
 	os.MkdirAll(home, 0755)
+
+	// Single-instance guard. Must run BEFORE any state is touched (socket,
+	// PID file, resurrect, reconcile) — otherwise two daemons racing to
+	// boot in the same instant both spawn full sets of children before
+	// anyone can detect anyone else. reconcile at boot doesn't cover this
+	// race because at that moment neither daemon has spawned yet.
+	//
+	// Non-blocking exclusive flock on $GOPM_HOME/daemon.lock. If held,
+	// exit 0 — "another daemon is already running" is the intended state,
+	// not an error. The kernel releases the lock automatically on process
+	// exit; we keep the FD alive by storing it on the Daemon struct.
+	lockFile, err := acquireDaemonLock(home)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if err == errDaemonAlreadyRunning {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
 
 	// Load configuration
 	result, err := config.Load(home, configFlag)
@@ -159,6 +183,7 @@ func Run(version string, configFlag string, debug bool, logLevelArg string) {
 		configPath:   result.Path,
 		configSource: result.Source,
 		logWriter:    logWriter,
+		lockFile:     lockFile,
 		counters: daemonCounters{
 			rpcCallsByMethod: make(map[string]uint64),
 		},
